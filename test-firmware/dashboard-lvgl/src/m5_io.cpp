@@ -1,6 +1,9 @@
 // m5_io.cpp — only place that includes M5Unified. Keeps M5GFX's mini-LVGL
 // types from colliding with full LVGL elsewhere in the build.
 
+#define TAB5_POWER_STATE_IMPLEMENTATION
+#include "tab5_power_state.h"
+
 #include "m5_io.h"
 
 #include <M5Unified.h>
@@ -65,8 +68,27 @@ void beep(int freq_hz, int duration_ms) {
   M5.Speaker.tone(freq_hz, duration_ms);
 }
 
-int   batteryPct()    { return M5.Power.getBatteryLevel(); }
-float batteryVolts()  { return M5.Power.getBatteryVoltage() / 1000.0f; }
+int batteryPct() {
+  return tab5_power::read().battery_pct;
+}
+
+float batteryVolts() { return tab5_power::read().battery_mv / 1000.0f; }
+
+bool batteryPresent() {
+  return tab5_power::read().battery_attached;
+}
+
+bool cableConnected() {
+  return tab5_power::read().cable_connected;
+}
+
+PowerState powerState() {
+  return tab5_power::readState();
+}
+
+bool batteryCharging() { return tab5_power::read().charging; }
+
+int batteryCurrentMa() { return tab5_power::read().battery_current_ma; }
 
 void wifiBegin(const char* ssid, const char* password) {
   WiFi.setPins(TAB5_SDIO2_CLK, TAB5_SDIO2_CMD,

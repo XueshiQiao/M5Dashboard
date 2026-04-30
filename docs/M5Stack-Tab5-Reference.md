@@ -150,6 +150,7 @@ Starting template: fork `https://github.com/m5stack/M5Tab5-UserDemo`, strip the 
 | `no memory for frame buffer` during build/run | PSRAM not enabled, or wrong partition scheme | Enable Octal PSRAM, partition `3MB app / 9.9MB FATFS`. |
 | `'adc_power_acquire' was not declared` on older demos | Legacy ADC driver removed in IDF 5.x | Skip the demo, or migrate to new ADC API. |
 | Device not in `/dev/cu.usbmodem*` after Reset | Not in download mode | Hold Reset 2 s until green LED **rapid-blinks**, then release. |
+| Device runs on battery but Mac shows no `/dev/cu.usbmodem*` when plugged in | USB-C OTG role / cable issue, or device was battery-powered before the host negotiated the data role | Use a known data-capable cable, preferably USB-A-to-C or a USB-C hub that forces the Mac as host. Connect USB first, then hold Reset ~2 s until the green LED rapid-blinks. If still missing, remove/reseat battery or power-cycle, then repeat. |
 | `M5GFX AnalogMeter` won't compile | Type-mismatch in `std::min()` | Cast: `std::min(6, (int)(display.width()) / 40)` |
 | Battery won't charge | IP2326 quirk — device must be powered on to charge | Power on first, then plug USB-C. |
 | `H_SDIO_DRV: card init failed` + `STA enable failed` | arduino-esp32's default SDIO pins are EvalBoard pins, not Tab5 pins | Add `WiFi.setPins(12,13,11,10,9,8,15)` before `WiFi.begin`. See §8. |
@@ -215,6 +216,14 @@ The C6 ships with ESP-Hosted slave firmware **1.4.1**; arduino-esp32 master ship
 
 - Charge IC IP2326 requires the system to be powered on to charge — schedule a "deep-sleep but-still-charging" mode if running unattended.
 - INA226 lets you read battery voltage / current / instantaneous power for a battery widget.
+- Battery presence should be inferred from INA226 voltage, not blindly from percentage. On Tab5, M5Unified maps the INA226 bus voltage to a 2S Li-ion percentage. With no NP-F550 pack attached, USB/VBUS can appear around 4.3 V and read as a bogus 0 % battery; a real 2S pack is roughly 6.0-8.4 V.
+- In M5Dashboard's LVGL UI, battery/Wi-Fi status refreshes every 2 s via an LVGL timer. The power indicator treats battery presence and USB/external cable presence as separate factors:
+  - battery + cable: charging icon + battery percentage
+  - battery + no cable: normal battery icon + battery percentage
+  - no battery + cable: USB icon, no fake percentage
+  - no battery + no cable: no power indicator
+- The four-state Tab5 power logic is packaged as a reusable single-file helper at `test-firmware/dashboard-lvgl/include/tab5_power_state.h`. Define `TAB5_POWER_STATE_IMPLEMENTATION` in exactly one `.cpp` file before including it.
+- If the Tab5 is already running from battery before the USB-C cable is attached, USB-C OTG role negotiation can fail or choose the wrong role, so macOS may not create `/dev/cu.usbmodem*`. For flashing, connect the data cable first and then enter download mode; USB-A-to-C is the most deterministic because the Mac side is forced to host.
 - BMI270 + RX8130CE both support wake-on-interrupt → can build a "tap-to-wake" or "scheduled-wake" power profile.
 - Approximate runtimes from M5Stack: 6 h @ 50 % brightness + Wi-Fi on. With aggressive dimming + sleep-between-polls, multi-day standby is feasible.
 

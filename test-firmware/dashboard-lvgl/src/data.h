@@ -82,8 +82,8 @@ struct NewsItem {
 
 struct NewsData {
   bool      valid;
-  uint8_t   count;       // number of populated items in `items` (0..3)
-  NewsItem  items[3];    // inbox card has 3 slots
+  uint8_t   count;       // number of populated items in `items` (0..5)
+  NewsItem  items[5];    // compact news layouts can show up to 5 rows
 };
 
 bool parseNews(const char* json, NewsData* out);

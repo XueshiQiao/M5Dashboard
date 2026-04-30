@@ -16,6 +16,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "tab5_power_state.h"
+
 namespace m5io {
 
 void  begin();
@@ -42,6 +44,14 @@ void  beep(int freq_hz, int duration_ms);
 
 int   batteryPct();
 float batteryVolts();
+bool  batteryPresent();
+bool  cableConnected();
+bool  batteryCharging();
+int   batteryCurrentMa();
+
+using PowerState = tab5_power::State;
+
+PowerState powerState();
 
 // --- Wi-Fi -----------------------------------------------------------------
 // Hidden behind the facade so <WiFi.h> stays out of LVGL translation units.

@@ -124,7 +124,7 @@ bool parseCodex(const char* json, CodexData* out) {
 bool parseNews(const char* json, NewsData* out) {
   out->valid = false;
   out->count = 0;
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 5; ++i) {
     out->items[i].title[0] = '\0';
     out->items[i].score    = 0;
   }
@@ -137,7 +137,7 @@ bool parseNews(const char* json, NewsData* out) {
 
   JsonArrayConst arr = doc["items"];
   for (JsonObjectConst row : arr) {
-    if (out->count >= 3) break;
+    if (out->count >= 5) break;
     auto& it = out->items[out->count];
     copyStr(it.title, sizeof(it.title), row["title"] | "—");
     it.score = row["score"] | 0;
