@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "m5_io.h"
+#include "ui/fonts/fonts.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -34,7 +35,11 @@ constexpr uint32_t kGood    = 0x55FF7F;
 constexpr uint32_t kWarn    = 0xFFD23F;
 constexpr uint32_t kCrit    = 0xFF5757;
 
-const lv_font_t* kFont = &lv_font_unscii_16;
+// Tamzen 8x16 covers ISO8859-1; LVGL's bundled unscii-16 (also 8x16) is
+// chained as a fallback so box-drawing (U+2500-U+257F) and block elements
+// (U+2580-U+259F) used in our rules and progress bars still render.
+lv_font_t g_font_body;     // populated in buildScreen()
+const lv_font_t* kFont = &g_font_body;
 
 // UNSCII-16 is 8×16 px monospace. +2 px line spacing keeps text legible.
 constexpr int kCharW = 8;
@@ -371,6 +376,9 @@ void buildTail(lv_obj_t* scr) {
 
 // ─── build / callbacks ───────────────────────────────────────────────────
 void buildScreen() {
+  g_font_body = lv_font_tamzen_16;
+  g_font_body.fallback = &lv_font_unscii_16;
+
   lv_obj_t* scr = lv_screen_active();
   lv_obj_clean(scr);
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
