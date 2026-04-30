@@ -194,7 +194,7 @@ void buildIdentity(lv_obj_t* scr) {
   lv_obj_align(logo, LV_ALIGN_TOP_LEFT, 20, 58);
 
   static const char* kMeta =
-      "os: dashboard-lvgl\n"
+      "os: m5dashboard\n"
       "host: esp32-p4 tab5\n"
       "res: 1280x720\n"
       "shell: local server :8787\n"

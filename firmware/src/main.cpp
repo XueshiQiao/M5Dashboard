@@ -1,4 +1,4 @@
-// dashboard-lvgl — entry point.
+// firmware — entry point.
 //
 // IMPORTANT: this file does NOT include <M5Unified.h>. M5GFX bundles its
 // own mini-LVGL types whose guards differ from LVGL's, so mixing the two

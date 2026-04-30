@@ -47,7 +47,7 @@ API keys.
                                        │ HTTP (LAN, bearer auth)
                                        ▼
                     ┌─────────────────────────────────────────────┐
-                    │  M5Stack Tab5 (dashboard-lvgl firmware)     │
+                    │  M5Stack Tab5 (firmware/)                   │
                     │                                             │
                     │  loop:        m5io::update + lv_timer       │
                     │  poller task: HTTP fetch every 60 s/15 min, │
@@ -90,24 +90,21 @@ M5Dashboard/
 │       ├── qweather.ts                QWeather REST + JWT signing
 │       ├── weather.ts                 /api/weather shaper (calls qweather)
 │       └── weatherIcon.ts             SVG → PNG via @resvg/resvg-js
-└── test-firmware/
-    ├── dashboard-mockup/              FROZEN reference (M5GFX-only)
-    ├── hello-tab5/                    FROZEN minimal blink-test
-    └── dashboard-lvgl/                ACTIVE firmware (LVGL 9.2)
-        ├── platformio.ini
-        ├── include/
-        │   ├── config.h               Wi-Fi creds, server URL, AUTH_TOKEN (gitignored)
-        │   ├── config.example.h
-        │   └── lv_conf.h
-        ├── scripts/
-        │   └── skip_lvgl_arm_asm.py   pre-build: stub Helium ARM .S, dedupe lv_font
-        └── src/
-            ├── main.cpp               setup/loop entry
-            ├── m5_io.{h,cpp}          M5Unified / WiFi facade
-            ├── lvgl_bridge.{h,cpp}    LVGL ↔ M5GFX flush/touch/tick
-            ├── data.{h,cpp}           value types + JSON parsers
-            ├── data_poller.{h,cpp}    FreeRTOS task + drain
-            ├── screen_grid.{h,cpp}    the four-card UI
+└── firmware/                         ESP32-P4 firmware (LVGL 9.2)
+    ├── platformio.ini
+    ├── include/
+    │   ├── config.h                   Wi-Fi creds, server URL, AUTH_TOKEN (gitignored)
+    │   ├── config.example.h
+    │   └── lv_conf.h
+    ├── scripts/
+    │   └── skip_lvgl_arm_asm.py       pre-build: stub Helium ARM .S, dedupe lv_font
+    └── src/
+        ├── main.cpp                   setup/loop entry
+        ├── m5_io.{h,cpp}              M5Unified / WiFi facade
+        ├── lvgl_bridge.{h,cpp}        LVGL ↔ M5GFX flush/touch/tick
+        ├── data.{h,cpp}               value types + JSON parsers
+        ├── data_poller.{h,cpp}        FreeRTOS task + drain
+        └── screen_grid.{h,cpp}        the four-card UI
 ```
 
 **Gitignore highlights:**
@@ -298,15 +295,12 @@ cp Icons/LICENSE      server/assets/qweather-icons/LICENSE
 
 ---
 
-## 5. Device firmware (`test-firmware/dashboard-lvgl/`)
-
-**Only this one is active.** `dashboard-mockup` and `hello-tab5` are
-frozen committed-history reference; do not modify them.
+## 5. Device firmware (`firmware/`)
 
 ### 5.1. Build & flash
 
 ```bash
-cd test-firmware/dashboard-lvgl
+cd firmware
 ~/.platformio/penv/bin/pio run
 ~/.platformio/penv/bin/pio run --target upload --upload-port /dev/cu.usbmodem111301
 ```
@@ -485,7 +479,7 @@ QWEATHER_KID=your-credential-kid
 QWEATHER_KEY_PATH=../ed25519-private.pem
 ```
 
-### 6.2. Device (`test-firmware/dashboard-lvgl/include/config.h`)
+### 6.2. Device (`firmware/include/config.h`)
 
 ```cpp
 namespace cfg {
@@ -574,5 +568,4 @@ while time.time() < end:
 - `server/README.md` — server quick-start (older; some endpoints
   omitted — this file is the source of truth for the `air`/`codex`/icon
   additions).
-- `test-firmware/dashboard-lvgl/README.md` — short bootstrap notes for
-  the firmware project.
+- `firmware/README.md` — short bootstrap notes for the firmware project.

@@ -1,8 +1,0 @@
-.pio/
-.vscode/
-*.o
-*.bin
-*.elf
-
-# Real config (Wi-Fi creds, eventually API keys). Use config.example.h as template.
-include/config.h

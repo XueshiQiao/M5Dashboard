@@ -6,7 +6,7 @@ The active firmware UI is untouched. To test this version, copy these two
 files over the active screen files:
 
 ```bash
-cd test-firmware/dashboard-lvgl
+cd firmware
 cp alternate-ui/vibehub/screen_grid.cpp src/screen_grid.cpp
 cp alternate-ui/vibehub/screen_grid.h src/screen_grid.h
 pio run

@@ -1,8 +1,6 @@
-# dashboard-lvgl
+# firmware
 
-LVGL-based fork of `dashboard-mockup`. Same pioarduino + M5Unified base for hardware; **LVGL 9.2** layered on top via a small bridge.
-
-The M5GFX-based mockup at `../dashboard-mockup/` is preserved as a reference.
+ESP32-P4 firmware for the M5Stack Tab5. pioarduino + M5Unified for hardware; **LVGL 9.2** layered on top via a small bridge.
 
 ## Why LVGL
 
@@ -34,7 +32,7 @@ The M5GFX-based mockup at `../dashboard-mockup/` is preserved as a reference.
 ## Build & flash
 
 ```bash
-cd test-firmware/dashboard-lvgl
+cd firmware
 ~/Code/M5Dashboard/.venv/bin/pio run
 ~/Code/M5Dashboard/.venv/bin/pio run -t upload --upload-port /dev/cu.usbmodem111301
 ```

@@ -72,6 +72,8 @@ constexpr uint32_t kPurple    = 0xD63BFF;
 constexpr uint32_t kBlue      = 0x36A3FF;
 constexpr uint32_t kRed       = 0xFF5B3E;
 
+const lv_font_t* kTitleFont = &lv_font_montserrat_40;
+
 constexpr size_t kIconBufBytes = 14 * 1024;
 uint8_t* g_weather_icon_buf = nullptr;
 size_t g_weather_icon_len = 0;
@@ -261,7 +263,7 @@ void buildHeader(lv_obj_t* scr) {
   int logo_x = 24;
   for (int i = 0; i < 9; ++i) {
     char ch[2] = { logo_text[i], '\0' };
-    lv_obj_t* letter = makeLabel(header, ch, &lv_font_montserrat_40, colors[i]);
+    lv_obj_t* letter = makeLabel(header, ch, kTitleFont, colors[i]);
     lv_obj_set_size(letter, i == 5 ? 44 : 38, 48);
     lv_obj_set_pos(letter, logo_x, 42);
     logo_x += i == 5 ? 44 : 38;

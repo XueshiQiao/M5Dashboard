@@ -222,7 +222,7 @@ The C6 ships with ESP-Hosted slave firmware **1.4.1**; arduino-esp32 master ship
   - battery + no cable: normal battery icon + battery percentage
   - no battery + cable: USB icon, no fake percentage
   - no battery + no cable: no power indicator
-- The four-state Tab5 power logic is packaged as a reusable single-file helper at `test-firmware/dashboard-lvgl/include/tab5_power_state.h`. Define `TAB5_POWER_STATE_IMPLEMENTATION` in exactly one `.cpp` file before including it.
+- The four-state Tab5 power logic is packaged as a reusable single-file helper at `firmware/include/tab5_power_state.h`. Define `TAB5_POWER_STATE_IMPLEMENTATION` in exactly one `.cpp` file before including it.
 - If the Tab5 is already running from battery before the USB-C cable is attached, USB-C OTG role negotiation can fail or choose the wrong role, so macOS may not create `/dev/cu.usbmodem*`. For flashing, connect the data cable first and then enter download mode; USB-A-to-C is the most deterministic because the Mac side is forced to host.
 - BMI270 + RX8130CE both support wake-on-interrupt → can build a "tap-to-wake" or "scheduled-wake" power profile.
 - Approximate runtimes from M5Stack: 6 h @ 50 % brightness + Wi-Fi on. With aggressive dimming + sleep-between-polls, multi-day standby is feasible.

@@ -24,10 +24,7 @@ M5Dashboard/
 │   ├── assets/qweather-icons/         vendored qwd/Icons SVGs (MIT)
 │   ├── assets/brand-icons/            Claude / Codex logo SVGs
 │   └── src/                           Fastify routes + provider modules
-└── test-firmware/
-    ├── hello-tab5/                    minimal blink-test (frozen reference)
-    ├── dashboard-mockup/              M5GFX-only mockup with fake data (frozen reference)
-    └── dashboard-lvgl/                ACTIVE firmware (LVGL 9, real data)
+└── firmware/                         device firmware (LVGL 9, real data)
 ```
 
 ## Quick start
@@ -48,7 +45,7 @@ The server binds `0.0.0.0:8787`. Find your Mac's LAN IP with
 ### 2. Device firmware
 
 ```bash
-cd test-firmware/dashboard-lvgl
+cd firmware
 cp include/config.example.h include/config.h
 # edit include/config.h — Wi-Fi creds, server URL, AUTH_TOKEN matching server/.env
 pio run --target upload --upload-port /dev/cu.usbmodem<your-tty>
@@ -75,7 +72,7 @@ Per `.gitignore`:
 
 - `ed25519-private.pem` / `ed25519-public.pem` — your QWeather signing keypair
 - `server/.env` — your AUTH_TOKEN and QWeather IDs
-- `test-firmware/*/include/config.h` — your Wi-Fi creds, server URL, AUTH_TOKEN
+- `firmware/include/config.h` — your Wi-Fi creds, server URL, AUTH_TOKEN
 
 Templates for each are checked in (`*.example.h`, `.env.example`).
 

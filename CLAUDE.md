@@ -9,9 +9,7 @@ Project-specific guidance for AI assistants working in this repo. Read [`docs/AR
 A two-piece system:
 
 - **`server/`** — Node + TypeScript + Fastify. Runs on the developer's Mac. Aggregates QWeather, Anthropic's OAuth Usage API, the local Codex CLI's `app-server` JSON-RPC, and Kagi News. Bearer-authed.
-- **`test-firmware/dashboard-lvgl/`** — ESP32-P4 firmware (pioarduino + arduino-esp32 + M5Unified + LVGL 9). Polls the server, renders four cards (Weather, Claude Code, Codex, Inbox).
-
-Two other firmware folders (`hello-tab5/`, `dashboard-mockup/`) are **frozen reference**. Do not modify them unless explicitly asked.
+- **`firmware/`** — ESP32-P4 firmware (pioarduino + arduino-esp32 + M5Unified + LVGL 9). Polls the server, renders four cards (Weather, Claude Code, Codex, Inbox).
 
 ---
 
@@ -31,7 +29,7 @@ server/src/
   codex.ts        codex app-server JSON-RPC subprocess
   news.ts         Kagi News RSS parser
 
-test-firmware/dashboard-lvgl/src/
+firmware/src/
   main.cpp           setup/loop entry
   m5_io.{h,cpp}      M5Unified / WiFi / HTTP facade — ONLY TU that includes <M5Unified.h>
   lvgl_bridge.{h,cpp}  LVGL ↔ M5GFX flush + touch + tick
@@ -49,7 +47,7 @@ test-firmware/dashboard-lvgl/src/
 The repo is open-source. Do **not** commit:
 - `ed25519-private.pem` / `ed25519-public.pem` (QWeather signing key)
 - `server/.env` (real `AUTH_TOKEN`, real QWeather IDs)
-- `test-firmware/*/include/config.h` (real Wi-Fi creds, server URL, AUTH_TOKEN)
+- `firmware/include/config.h` (real Wi-Fi creds, server URL, AUTH_TOKEN)
 
 All four are in `.gitignore`. Templates for them are checked in (`*.example.h`, `.env.example`).
 
@@ -87,7 +85,6 @@ These are durable preferences from prior sessions:
 
 - **Don't guess.** Verify state by reading files, hitting endpoints, or capturing serial output. If you can't verify, say so explicitly. Pattern-matching from training data has bitten this project multiple times.
 - **Verify on the device after each change** that affects the UI or data path. The user can't see results otherwise. Reset the Tab5 (DTR/RTS pulse) and capture serial via a pyserial reader; `pio device monitor` doesn't work from non-TTY shells.
-- **Only `dashboard-lvgl/` is the active firmware.** New work goes there. Don't edit `dashboard-mockup/` or `hello-tab5/`.
 - **No backwards-compat hacks.** Delete unused code completely. Don't leave `// removed` comments or aliases for renamed things.
 - **No comments explaining what the code does.** Identifiers do that. Comments are for *why* — non-obvious constraints, hidden invariants, workarounds with a reference.
 
@@ -115,7 +112,7 @@ curl -s -H "Authorization: Bearer $TOK" localhost:8787/api/news    | jq
 ### Firmware
 
 ```bash
-cd test-firmware/dashboard-lvgl
+cd firmware
 ~/.platformio/penv/bin/pio run                                         # build
 ~/.platformio/penv/bin/pio run --target upload --upload-port /dev/cu.usbmodem<NN>
 ```
