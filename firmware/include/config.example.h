@@ -16,4 +16,9 @@ constexpr uint32_t IDLE_DIM_MS      = 5 * 60 * 1000;
 // AUTH_TOKEN must match the server's .env (`openssl rand -hex 24`).
 constexpr const char* SERVER_URL = "http://192.168.x.x:8787";
 constexpr const char* AUTH_TOKEN = "paste-token-from-server-dot-env";
+
+// UI layout name. Registered layouts: "grid", "terminal", "vibehub".
+// Selected at boot; runtime switching is supported by ui::activateLayout()
+// but no UX trigger is wired today.
+constexpr const char* UI_LAYOUT = "grid";
 }

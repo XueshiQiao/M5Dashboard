@@ -30,12 +30,19 @@ server/src/
   news.ts         Kagi News RSS parser
 
 firmware/src/
-  main.cpp           setup/loop entry
-  m5_io.{h,cpp}      M5Unified / WiFi / HTTP facade — ONLY TU that includes <M5Unified.h>
-  lvgl_bridge.{h,cpp}  LVGL ↔ M5GFX flush + touch + tick
-  data.{h,cpp}       JSON value types + ArduinoJson parsers
-  data_poller.{h,cpp}  FreeRTOS poll task (core 0) + drain (LVGL thread)
-  screen_grid.{h,cpp}  the 4-card UI
+  main.cpp                       setup/loop entry — registers + activates UI layout
+  hw/
+    m5_io.{h,cpp}                M5Unified / WiFi / HTTP facade — ONLY TU that includes <M5Unified.h>
+    lvgl_bridge.{h,cpp}          LVGL ↔ M5GFX flush + touch + tick
+    data.{h,cpp}                 JSON value types + ArduinoJson parsers
+    data_poller.{h,cpp}          FreeRTOS poll task (core 0) + drain (LVGL thread)
+  ui/
+    layout.h                     Layout function-pointer interface
+    registry.{h,cpp}             register / activate / deliver helpers
+    layouts/
+      grid/grid_layout.{h,cpp}        4-card cockpit (default)
+      terminal/terminal_layout.{h,cpp}  fastfetch-style monochrome
+      vibehub/vibehub_layout.{h,cpp}    rainbow VIBEHUB
 ```
 
 ---
@@ -68,6 +75,10 @@ arduino-esp32's default SDIO GPIOs target the ESP32-P4 EvalBoard; the Tab5 wires
 ### LVGL widget calls live on the LVGL thread
 
 The poller task runs on FreeRTOS core 0. It stages snapshots under a mutex; `poller_drain()` runs from the LVGL thread (loop task) and is the only path that calls `lv_*` APIs. Don't call LVGL widget functions from the poller task.
+
+### UI layouts are function-pointer Layouts, not free symbols
+
+Each layout under `firmware/src/ui/layouts/<name>/` exposes exactly one `extern const ui::Layout k<Name>Layout` and keeps every other symbol file-static (inside an unnamed namespace). The poller never calls layout-specific code directly — it goes through `ui::deliverWeather/Claude/...` and `ui::activeIconSizes()`. To add a layout, drop a folder under `ui/layouts/`, add `ui::registerLayout(&kFooLayout)` in `main.cpp`, and select it via `cfg::UI_LAYOUT` in `include/config.h`. The interface supports runtime swap (`ui::activateLayout(name)`) but no UX trigger is wired today.
 
 ### Codex CLI is alpha (`0.125.0-alpha.3` at integration time)
 

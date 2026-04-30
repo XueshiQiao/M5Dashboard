@@ -20,7 +20,7 @@
 #include "config.h"
 #include "data.h"
 #include "m5_io.h"
-#include "screen_grid.h"
+#include "ui/registry.h"
 
 namespace {
 
@@ -68,6 +68,8 @@ BrandStage g_brand_claude = { "claude", nullptr, 0, false, false };
 BrandStage g_brand_codex  = { "codex",  nullptr, 0, false, false };
 
 bool fetchBrandIcon(BrandStage& b) {
+  const int brand_px = ui::activeIconSizes().brandPx;
+  if (brand_px <= 0) return false;
   if (!b.buf) {
     b.buf = static_cast<uint8_t*>(
         heap_caps_malloc(kBrandStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -79,7 +81,7 @@ bool fetchBrandIcon(BrandStage& b) {
   char url[200];
   snprintf(url, sizeof(url),
            "%s/api/icon/%s?size=%d",
-           cfg::SERVER_URL, b.name, ui::kBrandIconPx);
+           cfg::SERVER_URL, b.name, brand_px);
   size_t len = 0;
   if (!m5io::httpGetBinary(url, cfg::AUTH_TOKEN, b.buf, kBrandStageBytes, &len)) {
     Serial.printf("[poller] brand %s: HTTP failed\n", b.name);
@@ -95,6 +97,8 @@ bool fetchBrandIcon(BrandStage& b) {
 
 bool fetchAndStageIcon(const char* code) {
   if (!code || !code[0]) return false;
+  const int weather_px = ui::activeIconSizes().weatherPx;
+  if (weather_px <= 0) return false;
   if (!g_icon_stage_buf) {
     g_icon_stage_buf = static_cast<uint8_t*>(
         heap_caps_malloc(kIconStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -106,7 +110,7 @@ bool fetchAndStageIcon(const char* code) {
   char url[200];
   snprintf(url, sizeof(url),
            "%s/api/weather/icon/%s?size=%d",
-           cfg::SERVER_URL, code, ui::kWeatherIconPx);
+           cfg::SERVER_URL, code, weather_px);
   size_t len = 0;
   if (!m5io::httpGetBinary(url, cfg::AUTH_TOKEN,
                            g_icon_stage_buf, kIconStageBytes, &len)) {
@@ -324,11 +328,11 @@ void poller_drain() {
   }
   xSemaphoreGive(g_mu);
 
-  if (have_wx)        ui::updateWeatherCard(wx);
-  if (have_cl)        ui::updateClaudeCard(cl);
-  if (have_cx)        ui::updateCodexCard(cx);
-  if (have_news)      ui::updateInboxCard(nw);
-  if (have_icon)      ui::setWeatherIconPng(icon_copy, icon_len);
-  if (have_cl_icon)   ui::setClaudeIconPng(cl_copy, cl_icon_len);
-  if (have_cx_icon)   ui::setCodexIconPng (cx_copy, cx_icon_len);
+  if (have_wx)        ui::deliverWeather(wx);
+  if (have_cl)        ui::deliverClaude(cl);
+  if (have_cx)        ui::deliverCodex(cx);
+  if (have_news)      ui::deliverNews(nw);
+  if (have_icon)      ui::deliverWeatherIcon(icon_copy, icon_len);
+  if (have_cl_icon)   ui::deliverClaudeIcon(cl_copy, cl_icon_len);
+  if (have_cx_icon)   ui::deliverCodexIcon (cx_copy, cx_icon_len);
 }

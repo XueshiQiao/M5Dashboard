@@ -1,10 +1,10 @@
-// screen_grid.cpp - Terminal-style dashboard built with LVGL widgets.
+// Terminal-style layout — registers as ui::kTerminalLayout.
 //
 // Pure LVGL: this translation unit deliberately does NOT include M5Unified
 // (M5GFX bundles its own mini-LVGL types whose guards differ from LVGL's,
 // so mixing them in one .cpp causes "conflicting declaration" errors).
 
-#include "screen_grid.h"
+#include "ui/layouts/terminal/terminal_layout.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -285,8 +285,6 @@ void buildNewsTodoPane(lv_obj_t* scr) {
   lv_obj_align(todos, LV_ALIGN_TOP_LEFT, 20, 230);
 }
 
-}  // namespace
-
 void buildGridScreen() {
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
@@ -380,5 +378,20 @@ void setWeatherIconPng(const uint8_t* png, size_t len) {
   (void)png;
   (void)len;
 }
+
+}  // namespace
+
+const Layout kTerminalLayout = {
+  "terminal",
+  buildGridScreen,
+  updateWeatherCard,
+  updateClaudeCard,
+  updateCodexCard,
+  updateInboxCard,
+  setWeatherIconPng,
+  nullptr,
+  nullptr,
+  { 0, 0 },
+};
 
 }  // namespace ui

@@ -12,7 +12,14 @@
 #include "data_poller.h"
 #include "lvgl_bridge.h"
 #include "m5_io.h"
-#include "screen_grid.h"
+#include "ui/registry.h"
+#include "ui/layouts/grid/grid_layout.h"
+#include "ui/layouts/terminal/terminal_layout.h"
+#include "ui/layouts/vibehub/vibehub_layout.h"
+
+namespace {
+constexpr const char* kFallbackLayout = "grid";
+}  // namespace
 
 void setup() {
   m5io::begin();
@@ -31,12 +38,23 @@ void setup() {
                 m5io::touchEnabled() ? "yes" : "no");
 
   lvgl_bridge_init();
-  ui::buildGridScreen();
+
+  ui::registerLayout(&ui::kGridLayout);
+  ui::registerLayout(&ui::kTerminalLayout);
+  ui::registerLayout(&ui::kVibehubLayout);
+
+  if (!ui::activateLayout(cfg::UI_LAYOUT)) {
+    Serial.printf("[ui] unknown layout '%s', falling back to '%s'\n",
+                  cfg::UI_LAYOUT, kFallbackLayout);
+    ui::activateLayout(kFallbackLayout);
+  }
+  Serial.printf("[ui] active layout: %s\n",
+                ui::activeLayout() ? ui::activeLayout()->name : "<none>");
 
   poller_start();
 
   m5io::beep(880, 60);
-  Serial.println("[ui] grid screen built; poller task started");
+  Serial.println("[ui] poller task started");
 }
 
 void loop() {

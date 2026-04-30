@@ -99,12 +99,19 @@ M5Dashboard/
     ├── scripts/
     │   └── skip_lvgl_arm_asm.py       pre-build: stub Helium ARM .S, dedupe lv_font
     └── src/
-        ├── main.cpp                   setup/loop entry
-        ├── m5_io.{h,cpp}              M5Unified / WiFi facade
-        ├── lvgl_bridge.{h,cpp}        LVGL ↔ M5GFX flush/touch/tick
-        ├── data.{h,cpp}               value types + JSON parsers
-        ├── data_poller.{h,cpp}        FreeRTOS task + drain
-        └── screen_grid.{h,cpp}        the four-card UI
+        ├── main.cpp                   setup/loop entry — registers + activates UI layout
+        ├── hw/
+        │   ├── m5_io.{h,cpp}          M5Unified / WiFi facade
+        │   ├── lvgl_bridge.{h,cpp}    LVGL ↔ M5GFX flush/touch/tick
+        │   ├── data.{h,cpp}           value types + JSON parsers
+        │   └── data_poller.{h,cpp}    FreeRTOS task + drain (uses ui::deliver*)
+        └── ui/
+            ├── layout.h               Layout function-pointer interface
+            ├── registry.{h,cpp}       register/activate/deliver helpers
+            └── layouts/
+                ├── grid/                  cockpit grid layout (kGridLayout)
+                ├── terminal/              fastfetch-style (kTerminalLayout)
+                └── vibehub/               rainbow header (kVibehubLayout)
 ```
 
 **Gitignore highlights:**

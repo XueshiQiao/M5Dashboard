@@ -1,10 +1,10 @@
-// screen_grid.cpp - VIBEHUB terminal cockpit alternate UI.
+// VIBEHUB terminal cockpit layout — registers as ui::kGridLayout.
 //
 // Pure LVGL plus the m5_io facade. This file deliberately avoids M5Unified
 // and M5GFX includes so their bundled mini-LVGL types do not collide with
 // the real LVGL headers.
 
-#include "screen_grid.h"
+#include "ui/layouts/grid/grid_layout.h"
 
 #include "m5_io.h"
 
@@ -15,6 +15,9 @@
 
 namespace ui {
 namespace {
+
+constexpr int kWeatherIconPx = 112;
+constexpr int kBrandIconPx   = 34;
 
 struct StatusHandles {
   lv_obj_t* wifi;
@@ -71,6 +74,8 @@ constexpr uint32_t kPink      = 0xFF1C7D;
 constexpr uint32_t kPurple    = 0xD63BFF;
 constexpr uint32_t kBlue      = 0x36A3FF;
 constexpr uint32_t kRed       = 0xFF5B3E;
+
+const lv_font_t* kTitleFont = &lv_font_montserrat_40;
 
 constexpr size_t kIconBufBytes = 14 * 1024;
 uint8_t* g_weather_icon_buf = nullptr;
@@ -261,7 +266,7 @@ void buildHeader(lv_obj_t* scr) {
   int logo_x = 24;
   for (int i = 0; i < 9; ++i) {
     char ch[2] = { logo_text[i], '\0' };
-    lv_obj_t* letter = makeLabel(header, ch, &lv_font_montserrat_40, colors[i]);
+    lv_obj_t* letter = makeLabel(header, ch, kTitleFont, colors[i]);
     lv_obj_set_size(letter, i == 5 ? 44 : 38, 48);
     lv_obj_set_pos(letter, logo_x, 42);
     logo_x += i == 5 ? 44 : 38;
@@ -490,8 +495,6 @@ void applyUsage(const UsageHandles& h, const data::ClaudeData& d) {
       lv_color_hex(d.extraEnabled ? kGreen : kDim), 0);
 }
 
-}  // namespace
-
 void buildGridScreen() {
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
@@ -606,5 +609,20 @@ void setClaudeIconPng(const uint8_t* png, size_t len) {
 void setCodexIconPng(const uint8_t* png, size_t len) {
   applyBrandIcon(g_brand_codex, g_codex.icon, png, len);
 }
+
+}  // namespace
+
+const Layout kGridLayout = {
+  "grid",
+  buildGridScreen,
+  updateWeatherCard,
+  updateClaudeCard,
+  updateCodexCard,
+  updateInboxCard,
+  setWeatherIconPng,
+  setClaudeIconPng,
+  setCodexIconPng,
+  { kWeatherIconPx, kBrandIconPx },
+};
 
 }  // namespace ui
