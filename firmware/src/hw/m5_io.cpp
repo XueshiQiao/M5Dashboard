@@ -101,6 +101,12 @@ void wifiBegin(const char* ssid, const char* password) {
 bool wifiConnected() { return WiFi.status() == WL_CONNECTED; }
 int  wifiRssi()      { return wifiConnected() ? (int)WiFi.RSSI() : 0; }
 
+void wifiIpString(char* buf, size_t cap) {
+  if (!buf || cap == 0) return;
+  IPAddress ip = WiFi.localIP();
+  snprintf(buf, cap, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+}
+
 bool httpGetJson(const char* url, const char* bearer,
                  char* out_buf, size_t out_cap) {
   if (!out_buf || out_cap == 0) return false;

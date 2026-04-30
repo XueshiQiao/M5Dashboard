@@ -1,11 +1,17 @@
-// Terminal-style layout — registers as ui::kTerminalLayout.
+// Terminal layout — registers as ui::kTerminalLayout.
 //
-// Pure LVGL: this translation unit deliberately does NOT include M5Unified
-// (M5GFX bundles its own mini-LVGL types whose guards differ from LVGL's,
-// so mixing them in one .cpp causes "conflicting declaration" errors).
+// One screen, one font (UNSCII-16), no LVGL panels. Reads top-down like a
+// real terminal session: a neofetch banner with device info, a `$ weather`
+// pane, a `$ usage --watch` pane with bar charts, and a live tail of the
+// most recent poller events.
 
 #include "ui/layouts/terminal/terminal_layout.h"
 
+#include "config.h"
+#include "m5_io.h"
+
+#include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <stdio.h>
 #include <string.h>
 #include <lvgl.h>
@@ -13,383 +19,489 @@
 namespace ui {
 namespace {
 
-struct WeatherHandles {
-  lv_obj_t* summary;
-  lv_obj_t* forecast;
-  lv_obj_t* aqi;
-  lv_obj_t* top_weather;
+// ─── theme ───────────────────────────────────────────────────────────────
+constexpr uint32_t kBg      = 0x000805;
+constexpr uint32_t kPrompt  = 0x33FF77;   // bright green for `joey@m5tab5:~$`
+constexpr uint32_t kCmd     = 0xE7E7E0;   // command being typed
+constexpr uint32_t kRule    = 0x224030;   // dim green
+constexpr uint32_t kKey     = 0x77DDFF;   // cyan keys (neofetch labels)
+constexpr uint32_t kVal     = 0xE0E5DC;   // values
+constexpr uint32_t kAccent  = 0xFFC857;   // amber for highlights
+constexpr uint32_t kLogo    = 0x4FFF8E;   // logo green
+constexpr uint32_t kMuted   = 0x6B8478;
+constexpr uint32_t kDim     = 0x3D5147;
+constexpr uint32_t kGood    = 0x55FF7F;
+constexpr uint32_t kWarn    = 0xFFD23F;
+constexpr uint32_t kCrit    = 0xFF5757;
+
+const lv_font_t* kFont = &lv_font_unscii_16;
+
+// UNSCII-16 is 8×16 px monospace. +2 px line spacing keeps text legible.
+constexpr int kCharW = 8;
+constexpr int kRowH  = 18;
+constexpr int kPadL  = 16;
+constexpr int kPadT  = 8;
+
+// ─── handles ─────────────────────────────────────────────────────────────
+struct Handles {
+  // device (right column of neofetch banner)
+  lv_obj_t* d_uptime;
+  lv_obj_t* d_resolution;
+  lv_obj_t* d_layout;
+  lv_obj_t* d_shell;
+  lv_obj_t* d_wifi;
+  lv_obj_t* d_ip;
+  lv_obj_t* d_memory;
+  lv_obj_t* d_brightness;
+  lv_obj_t* d_battery;
+
+  // weather
+  lv_obj_t* w_summary;
+  lv_obj_t* w_aqi;
+  lv_obj_t* w_forecast;
+
+  // usage
+  lv_obj_t* u_claude_id;
+  lv_obj_t* u_claude_session;
+  lv_obj_t* u_claude_weekly;
+  lv_obj_t* u_codex_id;
+  lv_obj_t* u_codex_session;
+  lv_obj_t* u_codex_weekly;
+
+  // tail
+  lv_obj_t* t_lines[3];
 };
 
-struct UsageHandles {
-  lv_obj_t* account;
-  lv_obj_t* session;
-  lv_obj_t* weekly;
-  lv_obj_t* extra;
-  lv_obj_t* top_line;
-};
+Handles g_h = {};
+lv_timer_t* g_status_timer = nullptr;
 
-WeatherHandles g_wx = {};
-UsageHandles g_claude = {};
-UsageHandles g_codex = {};
-lv_obj_t*    g_news_body = nullptr;   // news label inside the news+todo pane
+// ring buffer for the tail strip
+constexpr int kTailRows = 3;
+char g_tail[kTailRows][96] = { "", "", "" };
 
-constexpr uint32_t kBg = 0x050807;
-constexpr uint32_t kPanel = 0x08100C;
-constexpr uint32_t kPanelAlt = 0x0B1510;
-constexpr uint32_t kBorder = 0x224431;
-constexpr uint32_t kGrid = 0x14271D;
-
-constexpr uint32_t kText = 0xD7FFE6;
-constexpr uint32_t kMuted = 0x79A486;
-constexpr uint32_t kDim = 0x47634F;
-constexpr uint32_t kGreen = 0x6BFF9A;
-constexpr uint32_t kCyan = 0x6DEBFF;
-constexpr uint32_t kYellow = 0xFFE66B;
-constexpr uint32_t kOrange = 0xFFB86B;
-constexpr uint32_t kPink = 0xFF7AB6;
-
-const lv_font_t* kTerm = &lv_font_unscii_16;
-const lv_font_t* kTermSmall = &lv_font_montserrat_14;
-const lv_font_t* kTermTitle = &lv_font_montserrat_20;
-
-lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, const lv_font_t* font,
-                    uint32_t color, lv_text_align_t align = LV_TEXT_ALIGN_LEFT) {
-  lv_obj_t* label = lv_label_create(parent);
-  lv_label_set_text(label, text);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(label, font, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
-  lv_obj_set_style_text_align(label, align, 0);
-  lv_obj_set_style_text_letter_space(label, 0, 0);
-  lv_obj_set_style_text_line_space(label, 6, 0);
-  return label;
+// ─── primitives ──────────────────────────────────────────────────────────
+lv_obj_t* mkLabel(lv_obj_t* parent, const char* text, uint32_t color,
+                  int x, int y, int w, int rows = 1) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_label_set_text(l, text);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_font(l, kFont, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+  lv_obj_set_style_text_letter_space(l, 0, 0);
+  lv_obj_set_style_text_line_space(l, 2, 0);
+  lv_obj_set_pos(l, x, y);
+  lv_obj_set_size(l, w, rows * kRowH);
+  return l;
 }
 
-lv_obj_t* makePane(lv_obj_t* parent, int x, int y, int w, int h,
-                   const char* title, uint32_t accent) {
-  lv_obj_t* pane = lv_obj_create(parent);
-  lv_obj_remove_style_all(pane);
-  lv_obj_set_pos(pane, x, y);
-  lv_obj_set_size(pane, w, h);
-  lv_obj_set_scrollbar_mode(pane, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(pane, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(pane, lv_color_hex(kPanel), 0);
-  lv_obj_set_style_bg_opa(pane, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(pane, 1, 0);
-  lv_obj_set_style_border_color(pane, lv_color_hex(kBorder), 0);
-  lv_obj_set_style_radius(pane, 0, 0);
-
-  lv_obj_t* title_label = makeLabel(pane, title, kTerm, accent);
-  lv_obj_set_size(title_label, w - 24, 22);
-  lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 12, 10);
-
-  lv_obj_t* rule = lv_obj_create(pane);
-  lv_obj_remove_style_all(rule);
-  lv_obj_set_pos(rule, 12, 38);
-  lv_obj_set_size(rule, w - 24, 1);
-  lv_obj_set_style_bg_color(rule, lv_color_hex(kGrid), 0);
-  lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
-
-  return pane;
+void setText(lv_obj_t* l, const char* text, uint32_t color) {
+  if (!l) return;
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
 }
 
-void setBody(lv_obj_t* label, const char* text, uint32_t color = kText) {
-  if (!label) return;
-  lv_label_set_text(label, text);
-  lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+uint32_t pctColor(int pct) {
+  if (pct >= 90) return kCrit;
+  if (pct >= 60) return kWarn;
+  return kGood;
 }
 
-void usageText(const data::ClaudeData& d, char* account, size_t account_cap,
-               char* session, size_t session_cap, char* weekly, size_t weekly_cap,
-               char* extra, size_t extra_cap, char* top, size_t top_cap) {
-  const char* email = d.emailMasked[0] ? d.emailMasked : d.email;
-  const char* plan = d.plan[0] ? d.plan : "-";
-  snprintf(account, account_cap, "$ whoami\nuser: %s\nplan: %s", email, plan);
+// 20 cells of `█` / `░`. UTF-8: U+2588 = E2 96 88, U+2591 = E2 96 91.
+void renderBar(char* buf, size_t cap, int pct, int cells) {
+  if (cap < (size_t)(cells * 3 + 1)) { if (cap) buf[0] = '\0'; return; }
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  int filled = (pct * cells + 50) / 100;
+  if (filled > cells) filled = cells;
+  size_t off = 0;
+  for (int i = 0; i < filled; ++i) {
+    buf[off++] = 0xE2; buf[off++] = 0x96; buf[off++] = 0x88;
+  }
+  for (int i = filled; i < cells; ++i) {
+    buf[off++] = 0xE2; buf[off++] = 0x96; buf[off++] = 0x91;
+  }
+  buf[off] = '\0';
+}
 
-  if (d.session.present) {
-    snprintf(session, session_cap, "$ quota --session\nused: %d%%\nreset: %s",
-             (int)d.session.utilizationPct, d.session.resetIn);
+void formatUptime(uint32_t ms, char* buf, size_t cap) {
+  uint32_t s  = ms / 1000;
+  uint32_t hh = s / 3600;
+  uint32_t mm = (s / 60) % 60;
+  uint32_t ss = s % 60;
+  if (hh >= 24) {
+    uint32_t dd = hh / 24;
+    hh = hh % 24;
+    snprintf(buf, cap, "%ud %02u:%02u:%02u", (unsigned)dd, (unsigned)hh, (unsigned)mm, (unsigned)ss);
   } else {
-    snprintf(session, session_cap, "$ quota --session\nused: -\nreset: -");
+    snprintf(buf, cap, "%02u:%02u:%02u", (unsigned)hh, (unsigned)mm, (unsigned)ss);
+  }
+}
+
+void clockStamp(char* buf, size_t cap) {
+  uint32_t s  = millis() / 1000;
+  uint32_t hh = (s / 3600) % 24;
+  uint32_t mm = (s / 60) % 60;
+  uint32_t ss = s % 60;
+  snprintf(buf, cap, "%02u:%02u:%02u", (unsigned)hh, (unsigned)mm, (unsigned)ss);
+}
+
+// Neofetch-style key-dot-padded line: `host ........... value`.
+void writeKv(char* buf, size_t cap, const char* key, const char* value) {
+  constexpr int kKeyCol = 14;
+  int klen = (int)strlen(key);
+  if (klen > kKeyCol) klen = kKeyCol;
+  int dots = kKeyCol - klen;
+  if (dots < 1) dots = 1;
+  size_t off = 0;
+  for (int i = 0; i < klen && off + 1 < cap; ++i) buf[off++] = key[i];
+  buf[off++] = ' ';
+  for (int i = 0; i < dots && off + 1 < cap; ++i) buf[off++] = '.';
+  buf[off++] = ' ';
+  size_t vlen = strlen(value);
+  if (off + vlen + 1 >= cap) vlen = cap > off + 1 ? cap - off - 1 : 0;
+  memcpy(buf + off, value, vlen);
+  off += vlen;
+  buf[off] = '\0';
+}
+
+// ─── tail ────────────────────────────────────────────────────────────────
+void pushTail(const char* line) {
+  for (int i = kTailRows - 1; i > 0; --i) {
+    strncpy(g_tail[i], g_tail[i - 1], sizeof(g_tail[i]) - 1);
+    g_tail[i][sizeof(g_tail[i]) - 1] = '\0';
+  }
+  strncpy(g_tail[0], line, sizeof(g_tail[0]) - 1);
+  g_tail[0][sizeof(g_tail[0]) - 1] = '\0';
+
+  for (int i = 0; i < kTailRows; ++i) {
+    if (g_h.t_lines[i]) {
+      lv_label_set_text(g_h.t_lines[i], g_tail[i]);
+      lv_obj_set_style_text_color(g_h.t_lines[i],
+          lv_color_hex(i == 0 ? kVal : kMuted), 0);
+    }
+  }
+}
+
+void logEvent(const char* msg) {
+  char ts[16];
+  clockStamp(ts, sizeof(ts));
+  char line[96];
+  snprintf(line, sizeof(line), "[%s] %s", ts, msg);
+  pushTail(line);
+}
+
+// ─── device info refresher ──────────────────────────────────────────────
+void refreshDevice() {
+  char up[24];
+  formatUptime(millis(), up, sizeof(up));
+  char buf[96];
+
+  writeKv(buf, sizeof(buf), "uptime", up);
+  setText(g_h.d_uptime, buf, kVal);
+
+  // wifi
+  if (m5io::wifiConnected()) {
+    char wbuf[64];
+    snprintf(wbuf, sizeof(wbuf), "%s @ %d dBm", cfg::WIFI_SSID, m5io::wifiRssi());
+    writeKv(buf, sizeof(buf), "wifi", wbuf);
+    setText(g_h.d_wifi, buf, kVal);
+
+    char ip[24];
+    m5io::wifiIpString(ip, sizeof(ip));
+    writeKv(buf, sizeof(buf), "ip", ip);
+    setText(g_h.d_ip, buf, kVal);
+  } else {
+    writeKv(buf, sizeof(buf), "wifi", "disconnected");
+    setText(g_h.d_wifi, buf, kCrit);
+    writeKv(buf, sizeof(buf), "ip", "0.0.0.0");
+    setText(g_h.d_ip, buf, kDim);
   }
 
-  if (d.weekly.present) {
-    snprintf(weekly, weekly_cap, "$ quota --weekly\nused: %d%%\nreset: %s",
-             (int)d.weekly.utilizationPct, d.weekly.resetIn);
+  // memory
+  size_t free_psram  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+  char mbuf[48];
+  snprintf(mbuf, sizeof(mbuf), "%u / %u MB psram",
+           (unsigned)(free_psram / (1024 * 1024)),
+           (unsigned)(total_psram / (1024 * 1024)));
+  writeKv(buf, sizeof(buf), "memory", mbuf);
+  setText(g_h.d_memory, buf, kVal);
+
+  // brightness
+  char br[16];
+  snprintf(br, sizeof(br), "%d / 255", cfg::BRIGHTNESS_ACTIVE);
+  writeKv(buf, sizeof(buf), "brightness", br);
+  setText(g_h.d_brightness, buf, kVal);
+
+  // battery
+  char bbuf[48];
+  const auto pwr = m5io::powerState();
+  if (pwr == m5io::PowerState::BatteryCable) {
+    snprintf(bbuf, sizeof(bbuf), "%d %% [CHG]", m5io::batteryPct());
+  } else if (pwr == m5io::PowerState::BatteryOnly) {
+    snprintf(bbuf, sizeof(bbuf), "%d %%", m5io::batteryPct());
+  } else if (pwr == m5io::PowerState::NoBatteryCable) {
+    snprintf(bbuf, sizeof(bbuf), "USB only");
   } else {
-    snprintf(weekly, weekly_cap, "$ quota --weekly\nused: -\nreset: -");
+    snprintf(bbuf, sizeof(bbuf), "n/a");
   }
-
-  snprintf(extra, extra_cap, "$ extra-usage\nstate: %s",
-           d.extraEnabled ? "enabled" : "disabled");
-
-  int session_pct = d.session.present ? d.session.utilizationPct : 0;
-  int weekly_pct = d.weekly.present ? d.weekly.utilizationPct : 0;
-  snprintf(top, top_cap, "%s  %s  S:%d%% W:%d%%", email, plan, session_pct, weekly_pct);
+  writeKv(buf, sizeof(buf), "battery", bbuf);
+  setText(g_h.d_battery, buf, kVal);
 }
 
-void applyUsage(const UsageHandles& h, const data::ClaudeData& d) {
-  if (!d.valid || h.account == nullptr) return;
-
-  char account[128];
-  char session[128];
-  char weekly[128];
-  char extra[80];
-  char top[96];
-  usageText(d, account, sizeof(account), session, sizeof(session),
-            weekly, sizeof(weekly), extra, sizeof(extra), top, sizeof(top));
-
-  setBody(h.account, account);
-  setBody(h.session, session, d.session.utilizationPct >= 80 ? kOrange : kText);
-  setBody(h.weekly, weekly, d.weekly.utilizationPct >= 80 ? kOrange : kText);
-  setBody(h.extra, extra, d.extraEnabled ? kGreen : kMuted);
-  setBody(h.top_line, top, kMuted);
+void statusTimerCb(lv_timer_t*) {
+  refreshDevice();
 }
 
-void buildTop(lv_obj_t* scr) {
-  lv_obj_t* bar = lv_obj_create(scr);
-  lv_obj_remove_style_all(bar);
-  lv_obj_set_pos(bar, 20, 16);
-  lv_obj_set_size(bar, 1240, 74);
-  lv_obj_set_style_bg_color(bar, lv_color_hex(kPanelAlt), 0);
-  lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(bar, 1, 0);
-  lv_obj_set_style_border_color(bar, lv_color_hex(kBorder), 0);
-  lv_obj_set_scrollbar_mode(bar, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+// ─── builders ────────────────────────────────────────────────────────────
+int row(int n) { return kPadT + n * kRowH; }
 
-  lv_obj_t* prompt = makeLabel(bar, "joey@m5tab5:~$ fastfetch --dashboard",
-                               kTermTitle, kGreen);
-  lv_obj_set_size(prompt, 610, 30);
-  lv_obj_align(prompt, LV_ALIGN_TOP_LEFT, 18, 12);
+void buildPrompt(lv_obj_t* scr, int r, const char* cmd) {
+  lv_obj_t* p = mkLabel(scr, "joey@m5tab5:~$", kPrompt, kPadL, row(r),
+                        14 * kCharW + 4);
+  (void)p;
+  mkLabel(scr, cmd, kCmd, kPadL + 14 * kCharW + 8, row(r),
+          24 * kCharW);
 
-  g_wx.top_weather = makeLabel(bar, "weather pending", kTerm, kYellow);
-  lv_obj_set_size(g_wx.top_weather, 290, 24);
-  lv_obj_align(g_wx.top_weather, LV_ALIGN_TOP_RIGHT, -18, 12);
-
-  g_claude.top_line = makeLabel(bar, "claude pending", kTermSmall, kMuted);
-  lv_obj_set_size(g_claude.top_line, 560, 20);
-  lv_obj_align(g_claude.top_line, LV_ALIGN_BOTTOM_LEFT, 18, -10);
-
-  g_codex.top_line = makeLabel(bar, "codex pending", kTermSmall, kMuted);
-  lv_obj_set_size(g_codex.top_line, 560, 20);
-  lv_obj_align(g_codex.top_line, LV_ALIGN_BOTTOM_RIGHT, -18, -10);
+  // horizontal rule on the next row — 154 cells of '─' (U+2500, E2 94 80)
+  static char rule[600];
+  int off = 0;
+  for (int i = 0; i < 154 && off + 3 < (int)sizeof(rule) - 1; ++i) {
+    rule[off++] = 0xE2; rule[off++] = 0x94; rule[off++] = 0x80;
+  }
+  rule[off] = '\0';
+  mkLabel(scr, rule, kRule, kPadL, row(r + 1), 1240);
 }
 
-void buildIdentity(lv_obj_t* scr) {
-  lv_obj_t* pane = makePane(scr, 20, 106, 430, 344, "[m5dashboard]", kGreen);
+void buildBanner(lv_obj_t* scr) {
+  buildPrompt(scr, 0, "neofetch");
 
-  static const char* kLogo =
-      "        ____  _____\n"
-      "       / __ \\/ ___/\n"
-      "      / / / /\\__ \\ \n"
-      "     / /_/ /___/ / \n"
-      "    /_____//____/  \n"
-      "                    \n"
-      "   M5 TAB5 // 720P  \n"
-      "   LOCAL INFO NODE  ";
+  // Box-drawing logo.
+  static const char* kLogo1 =
+      " ███╗   ███╗  ███████╗  ██████╗   █████╗   ███████╗  ██╗  ██╗\n"
+      " ████╗ ████║  ██╔════╝  ██╔══██╗ ██╔══██╗  ██╔════╝  ██║  ██║\n"
+      " ██╔████╔██║  ███████╗  ██║  ██║ ███████║  ███████╗  ███████║\n"
+      " ██║╚██╔╝██║  ╚════██║  ██║  ██║ ██╔══██║  ╚════██║  ██╔══██║\n"
+      " ██║ ╚═╝ ██║  ███████║  ██████╔╝ ██║  ██║  ███████║  ██║  ██║\n"
+      " ╚═╝     ╚═╝  ╚══════╝  ╚═════╝  ╚═╝  ╚═╝  ╚══════╝  ╚═╝  ╚═╝";
+  lv_obj_t* logo = mkLabel(scr, kLogo1, kLogo, kPadL, row(3), 60 * kCharW + 8, 7);
+  (void)logo;
 
-  lv_obj_t* logo = makeLabel(pane, kLogo, kTerm, kGreen);
-  lv_obj_set_size(logo, 390, 170);
-  lv_obj_align(logo, LV_ALIGN_TOP_LEFT, 20, 58);
+  // Right-column key/value lines start beside the logo.
+  constexpr int kInfoX = kPadL + 64 * kCharW;
+  constexpr int kInfoW = 1280 - kInfoX - 16;
 
-  static const char* kMeta =
-      "os: m5dashboard\n"
-      "host: esp32-p4 tab5\n"
-      "res: 1280x720\n"
-      "shell: local server :8787\n"
-      "theme: terminal";
-  lv_obj_t* meta = makeLabel(pane, kMeta, kTerm, kCyan);
-  lv_obj_set_size(meta, 390, 110);
-  lv_obj_align(meta, LV_ALIGN_BOTTOM_LEFT, 20, -18);
+  char buf[96];
+  writeKv(buf, sizeof(buf), "os",         "m5dashboard 1.0  (esp32-p4)");
+  mkLabel(scr, buf, kKey, kInfoX, row(3), kInfoW);
+  writeKv(buf, sizeof(buf), "host",       "m5stack tab5  /  esp32-p4 + c6");
+  mkLabel(scr, buf, kKey, kInfoX, row(4), kInfoW);
+
+  g_h.d_uptime     = mkLabel(scr, "uptime ........ -",        kVal, kInfoX, row(5),  kInfoW);
+  g_h.d_resolution = mkLabel(scr, "resolution .... 1280x720", kVal, kInfoX, row(6),  kInfoW);
+  g_h.d_layout     = mkLabel(scr, "layout ........ terminal", kVal, kInfoX, row(7),  kInfoW);
+  g_h.d_shell      = mkLabel(scr, "shell ......... -",        kVal, kInfoX, row(8),  kInfoW);
+  g_h.d_wifi       = mkLabel(scr, "wifi .......... -",        kVal, kInfoX, row(9),  kInfoW);
+  g_h.d_ip         = mkLabel(scr, "ip ............ -",        kVal, kInfoX, row(10), kInfoW);
+  g_h.d_memory     = mkLabel(scr, "memory ........ -",        kVal, kInfoX, row(11), kInfoW);
+  g_h.d_brightness = mkLabel(scr, "brightness .... -",        kVal, kInfoX, row(12), kInfoW);
+  g_h.d_battery    = mkLabel(scr, "battery ....... -",        kVal, kInfoX, row(13), kInfoW);
+
+  // shell line is static-ish; fill once with config server URL.
+  writeKv(buf, sizeof(buf), "shell", cfg::SERVER_URL);
+  setText(g_h.d_shell, buf, kVal);
 }
 
-void buildWeatherPane(lv_obj_t* scr) {
-  lv_obj_t* pane = makePane(scr, 470, 106, 790, 190, "[weather]", kYellow);
+void buildWeather(lv_obj_t* scr) {
+  buildPrompt(scr, 15, "weather --now");
+  g_h.w_summary  = mkLabel(scr,
+      "city ......... waiting...\n"
+      "temp ......... -\n"
+      "range ........ -\n"
+      "humidity ..... -\n"
+      "wind ......... -",
+      kVal, kPadL + 4, row(17), 60 * kCharW, 5);
+  g_h.w_aqi      = mkLabel(scr, "aqi .......... -", kMuted,
+                           kPadL + 4, row(22), 60 * kCharW);
 
-  g_wx.summary = makeLabel(pane,
-                           "$ weather --now\n"
-                           "city: pending\n"
-                           "temp: -\n"
-                           "wind: -",
-                           kTerm, kText);
-  lv_obj_set_size(g_wx.summary, 300, 130);
-  lv_obj_align(g_wx.summary, LV_ALIGN_TOP_LEFT, 20, 58);
-
-  g_wx.aqi = makeLabel(pane,
-                       "$ air-quality\n"
-                       "aqi: -\n"
-                       "primary: -",
-                       kTerm, kMuted);
-  lv_obj_set_size(g_wx.aqi, 220, 100);
-  lv_obj_align(g_wx.aqi, LV_ALIGN_TOP_LEFT, 340, 58);
-
-  g_wx.forecast = makeLabel(pane,
-                            "$ forecast --5d\n"
-                            "waiting for server",
-                            kTerm, kText);
-  lv_obj_set_size(g_wx.forecast, 220, 120);
-  lv_obj_align(g_wx.forecast, LV_ALIGN_TOP_RIGHT, -20, 58);
+  g_h.w_forecast = mkLabel(scr,
+      "forecast --5d\n"
+      "  -\n  -\n  -\n  -\n  -",
+      kAccent, kPadL + 70 * kCharW, row(17), 80 * kCharW, 6);
 }
 
-void buildUsagePane(lv_obj_t* scr, int x, int y, int w, int h,
-                    const char* title, uint32_t accent, UsageHandles* handles) {
-  lv_obj_t* pane = makePane(scr, x, y, w, h, title, accent);
-
-  handles->account = makeLabel(pane, "$ whoami\nuser: pending\nplan: -", kTerm, kText);
-  lv_obj_set_size(handles->account, w - 40, 78);
-  lv_obj_align(handles->account, LV_ALIGN_TOP_LEFT, 20, 56);
-
-  handles->session = makeLabel(pane, "$ quota --session\nused: -\nreset: -", kTerm, kText);
-  lv_obj_set_size(handles->session, w - 40, 78);
-  lv_obj_align(handles->session, LV_ALIGN_TOP_LEFT, 20, 146);
-
-  handles->weekly = makeLabel(pane, "$ quota --weekly\nused: -\nreset: -", kTerm, kText);
-  lv_obj_set_size(handles->weekly, w - 40, 78);
-  lv_obj_align(handles->weekly, LV_ALIGN_TOP_LEFT, 20, 236);
-
-  handles->extra = makeLabel(pane, "$ extra-usage\nstate: -", kTerm, kMuted);
-  lv_obj_set_size(handles->extra, w - 40, 56);
-  lv_obj_align(handles->extra, LV_ALIGN_BOTTOM_LEFT, 20, -14);
+void buildUsageLine(lv_obj_t* scr, int r, lv_obj_t** id_out, lv_obj_t** session_out,
+                    lv_obj_t** weekly_out, const char* placeholder_id) {
+  *id_out = mkLabel(scr, placeholder_id, kAccent, kPadL + 4, row(r),
+                    60 * kCharW);
+  *session_out = mkLabel(scr,
+      "  session  ░░░░░░░░░░░░░░░░░░░░    -    reset      -",
+      kVal, kPadL + 4, row(r + 1), 110 * kCharW);
+  *weekly_out  = mkLabel(scr,
+      "  weekly   ░░░░░░░░░░░░░░░░░░░░    -    reset      -",
+      kVal, kPadL + 4, row(r + 2), 110 * kCharW);
 }
 
-void buildNewsTodoPane(lv_obj_t* scr) {
-  lv_obj_t* pane = makePane(scr, 884, 316, 376, 384, "[news + todo]", kPink);
-
-  // Placeholder until the first /api/news poll lands. The label height
-  // is bumped to 150 px so three Kagi-length headlines (which can wrap
-  // to 2 lines each) fit without crowding the to-do list below.
-  static const char* kNewsBootstrap =
-      "$ news --brief\n"
-      "> waiting for first poll...";
-  lv_obj_t* news = makeLabel(pane, kNewsBootstrap, kTerm, kText);
-  lv_obj_set_size(news, 336, 150);
-  lv_obj_align(news, LV_ALIGN_TOP_LEFT, 20, 56);
-  g_news_body = news;
-
-  lv_obj_t* rule = lv_obj_create(pane);
-  lv_obj_remove_style_all(rule);
-  lv_obj_set_pos(rule, 20, 215);
-  lv_obj_set_size(rule, 336, 1);
-  lv_obj_set_style_bg_color(rule, lv_color_hex(kGrid), 0);
-  lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
-
-  static const char* kTodos =
-      "$ todo ls\n"
-      "[x] wire real inbox source\n"
-      "[ ] add agenda endpoint\n"
-      "[ ] tune terminal palette\n"
-      "[x] weather + usage live";
-  lv_obj_t* todos = makeLabel(pane, kTodos, kTerm, kCyan);
-  lv_obj_set_size(todos, 336, 140);
-  lv_obj_align(todos, LV_ALIGN_TOP_LEFT, 20, 230);
+void buildUsage(lv_obj_t* scr) {
+  buildPrompt(scr, 25, "usage --watch");
+  buildUsageLine(scr, 27, &g_h.u_claude_id, &g_h.u_claude_session, &g_h.u_claude_weekly,
+                 "claude   waiting for /api/claude...");
+  buildUsageLine(scr, 30, &g_h.u_codex_id,  &g_h.u_codex_session,  &g_h.u_codex_weekly,
+                 "codex    waiting for /api/codex...");
 }
 
-void buildGridScreen() {
+void buildTail(lv_obj_t* scr) {
+  // separator
+  static char rule[600];
+  int off = 0;
+  for (int i = 0; i < 154 && off + 3 < (int)sizeof(rule) - 1; ++i) {
+    rule[off++] = 0xE2; rule[off++] = 0x94; rule[off++] = 0x80;
+  }
+  rule[off] = '\0';
+  mkLabel(scr, rule, kRule, kPadL, row(34), 1240);
+
+  mkLabel(scr, "$ tail -f /var/log/poller", kPrompt, kPadL, row(35), 60 * kCharW);
+
+  for (int i = 0; i < kTailRows; ++i) {
+    g_h.t_lines[i] = mkLabel(scr, "  (waiting for events)",
+                             i == 0 ? kVal : kMuted,
+                             kPadL + 2 * kCharW, row(36 + i), 150 * kCharW);
+  }
+}
+
+// ─── build / callbacks ───────────────────────────────────────────────────
+void buildScreen() {
   lv_obj_t* scr = lv_screen_active();
+  lv_obj_clean(scr);
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  buildTop(scr);
-  buildIdentity(scr);
-  buildWeatherPane(scr);
-  buildUsagePane(scr, 20, 470, 410, 230, "[claude-code]", kCyan, &g_claude);
-  buildUsagePane(scr, 450, 316, 414, 384, "[codex]", kGreen, &g_codex);
-  buildNewsTodoPane(scr);
+  buildBanner(scr);
+  buildWeather(scr);
+  buildUsage(scr);
+  buildTail(scr);
+
+  refreshDevice();
+
+  if (g_status_timer) lv_timer_del(g_status_timer);
+  g_status_timer = lv_timer_create(statusTimerCb, 1000, nullptr);
 }
 
-void updateWeatherCard(const data::WeatherData& d) {
-  if (!d.valid || g_wx.summary == nullptr) return;
+void onWeather(const data::WeatherData& d) {
+  if (!d.valid || !g_h.w_summary) return;
 
-  char summary[160];
-  snprintf(summary, sizeof(summary),
-           "$ weather --now\ncity: %s\ntemp: %dC / %s\nrange: H %d  L %d\nwind: %d km/h\nhumidity: %d%%",
-           d.city, (int)d.tempC, d.condition, (int)d.highC, (int)d.lowC,
-           (int)d.windKmh, (int)d.humidityPct);
-  setBody(g_wx.summary, summary);
-
-  char top[96];
-  snprintf(top, sizeof(top), "%s  %dC  %s", d.city, (int)d.tempC, d.condition);
-  setBody(g_wx.top_weather, top, kYellow);
+  char body[256];
+  snprintf(body, sizeof(body),
+           "city ......... %s\n"
+           "temp ......... %d\xC2\xB0""C  %s\n"
+           "range ........ %d / %d\xC2\xB0""C\n"
+           "humidity ..... %d %%\n"
+           "wind ......... %d km/h",
+           d.city, (int)d.tempC, d.condition,
+           (int)d.highC, (int)d.lowC,
+           (int)d.humidityPct, (int)d.windKmh);
+  setText(g_h.w_summary, body, kVal);
 
   if (d.air.present) {
-    char aqi[128];
-    snprintf(aqi, sizeof(aqi),
-             "$ air-quality\naqi: %u %s\nprimary: %s",
+    char aqi[80];
+    snprintf(aqi, sizeof(aqi), "aqi .......... %u  %s  /  %s",
              (unsigned)d.air.aqi, d.air.category, d.air.primary);
     uint32_t hex = ((uint32_t)d.air.r << 16) |
                    ((uint32_t)d.air.g << 8) |
                    (uint32_t)d.air.b;
-    setBody(g_wx.aqi, aqi, hex);
+    setText(g_h.w_aqi, aqi, hex);
   } else {
-    setBody(g_wx.aqi, "$ air-quality\naqi: -\nprimary: -", kMuted);
+    setText(g_h.w_aqi, "aqi .......... -", kDim);
   }
 
-  char forecast[192];
-  snprintf(forecast, sizeof(forecast),
-           "$ forecast --5d\n%s  %d/%d  %s\n%s  %d/%d  %s\n%s  %d/%d  %s\n%s  %d/%d  %s\n%s  %d/%d  %s",
+  char fc[256];
+  snprintf(fc, sizeof(fc),
+           "forecast --5d\n"
+           "  %-3s  %3d / %-3d   %s\n"
+           "  %-3s  %3d / %-3d   %s\n"
+           "  %-3s  %3d / %-3d   %s\n"
+           "  %-3s  %3d / %-3d   %s\n"
+           "  %-3s  %3d / %-3d   %s",
            d.forecast[0].day, (int)d.forecast[0].highC, (int)d.forecast[0].lowC, d.forecast[0].glyph,
            d.forecast[1].day, (int)d.forecast[1].highC, (int)d.forecast[1].lowC, d.forecast[1].glyph,
            d.forecast[2].day, (int)d.forecast[2].highC, (int)d.forecast[2].lowC, d.forecast[2].glyph,
            d.forecast[3].day, (int)d.forecast[3].highC, (int)d.forecast[3].lowC, d.forecast[3].glyph,
            d.forecast[4].day, (int)d.forecast[4].highC, (int)d.forecast[4].lowC, d.forecast[4].glyph);
-  setBody(g_wx.forecast, forecast);
+  setText(g_h.w_forecast, fc, kAccent);
+
+  char ev[80];
+  snprintf(ev, sizeof(ev), "weather  %s  %d\xC2\xB0""C  %s",
+           d.city, (int)d.tempC, d.condition);
+  logEvent(ev);
 }
 
-void updateClaudeCard(const data::ClaudeData& d) { applyUsage(g_claude, d); }
-void updateCodexCard(const data::CodexData& d) { applyUsage(g_codex, d); }
-
-void updateInboxCard(const data::NewsData& d) {
-  if (!d.valid || g_news_body == nullptr) return;
-  // Build a single multi-line string in terminal style:
-  //   $ news --brief
-  //   > Item one title (truncated to ~40 chars)
-  //   > Item two ...
-  //   > Item three ...
-  // Truncation matches the unscii-16 char width inside the 336 px label.
-  constexpr size_t kMaxLine = 40;
-  char body[512];
-  size_t off = 0;
-  off += snprintf(body + off, sizeof(body) - off, "$ news --brief");
-  if (d.count == 0) {
-    off += snprintf(body + off, sizeof(body) - off, "\n> (no items)");
-  }
-  for (uint8_t i = 0; i < d.count && off < sizeof(body) - 4; ++i) {
-    const char* t = d.items[i].title;
-    char trimmed[kMaxLine + 4];
-    size_t tlen = strnlen(t, kMaxLine);
-    memcpy(trimmed, t, tlen);
-    if (strlen(t) > kMaxLine) {
-      trimmed[kMaxLine - 1] = '.';
-      trimmed[kMaxLine - 2] = '.';
-      trimmed[kMaxLine - 3] = '.';
-      trimmed[kMaxLine]     = '\0';
-    } else {
-      trimmed[tlen] = '\0';
-    }
-    off += snprintf(body + off, sizeof(body) - off, "\n> %s", trimmed);
-  }
-  setBody(g_news_body, body, kText);
+void renderUsageLine(lv_obj_t* lbl, const char* label, int pct, const char* reset) {
+  if (!lbl) return;
+  char bar[80];
+  renderBar(bar, sizeof(bar), pct, 20);
+  char line[160];
+  snprintf(line, sizeof(line), "  %-7s  %s  %3d %%  reset %s",
+           label, bar, pct, reset && reset[0] ? reset : "-");
+  setText(lbl, line, pctColor(pct));
 }
 
-void setWeatherIconPng(const uint8_t* png, size_t len) {
-  (void)png;
-  (void)len;
+void renderUsageIdLine(lv_obj_t* lbl, const char* who, const data::ClaudeData& d) {
+  if (!lbl) return;
+  const char* email = d.emailMasked[0] ? d.emailMasked : (d.email[0] ? d.email : "-");
+  const char* plan  = d.plan[0] ? d.plan : "-";
+  char line[120];
+  snprintf(line, sizeof(line), "%-7s  %-22s  %-8s  extra: %s",
+           who, email, plan, d.extraEnabled ? "on" : "off");
+  setText(lbl, line, kAccent);
+}
+
+void onClaude(const data::ClaudeData& d) {
+  if (!d.valid || !g_h.u_claude_id) return;
+  renderUsageIdLine(g_h.u_claude_id, "claude", d);
+  if (d.session.present) {
+    renderUsageLine(g_h.u_claude_session, "session",
+                    d.session.utilizationPct, d.session.resetIn);
+  }
+  if (d.weekly.present) {
+    renderUsageLine(g_h.u_claude_weekly, "weekly",
+                    d.weekly.utilizationPct, d.weekly.resetIn);
+  }
+  char ev[96];
+  snprintf(ev, sizeof(ev), "claude   session %d %%   weekly %d %%",
+           (int)d.session.utilizationPct, (int)d.weekly.utilizationPct);
+  logEvent(ev);
+}
+
+void onCodex(const data::CodexData& d) {
+  if (!d.valid || !g_h.u_codex_id) return;
+  renderUsageIdLine(g_h.u_codex_id, "codex", d);
+  if (d.session.present) {
+    renderUsageLine(g_h.u_codex_session, "session",
+                    d.session.utilizationPct, d.session.resetIn);
+  }
+  if (d.weekly.present) {
+    renderUsageLine(g_h.u_codex_weekly, "weekly",
+                    d.weekly.utilizationPct, d.weekly.resetIn);
+  }
+  char ev[96];
+  snprintf(ev, sizeof(ev), "codex    session %d %%   weekly %d %%",
+           (int)d.session.utilizationPct, (int)d.weekly.utilizationPct);
+  logEvent(ev);
 }
 
 }  // namespace
 
 const Layout kTerminalLayout = {
   "terminal",
-  buildGridScreen,
-  updateWeatherCard,
-  updateClaudeCard,
-  updateCodexCard,
-  updateInboxCard,
-  setWeatherIconPng,
-  nullptr,
+  buildScreen,
+  onWeather,
+  onClaude,
+  onCodex,
+  nullptr,         // no news in terminal
+  nullptr,         // no weather PNG icon
+  nullptr,         // no brand icons
   nullptr,
   { 0, 0 },
 };

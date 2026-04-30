@@ -63,6 +63,9 @@ void  wifiBegin(const char* ssid, const char* password);
 bool  wifiConnected();
 int   wifiRssi();
 
+// Writes the dotted-quad IPv4 (or "0.0.0.0" if not associated) into buf.
+void  wifiIpString(char* buf, size_t cap);
+
 // --- HTTP ------------------------------------------------------------------
 // Blocking GET. Writes UTF-8 body into out_buf (NUL-terminated, truncated to
 // out_cap-1). bearer may be nullptr/"" to skip the Authorization header.
