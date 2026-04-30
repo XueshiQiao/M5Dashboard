@@ -1,0 +1,25 @@
+# PlatformIO build artifacts
+**/.pio/
+.pioenvs/
+.piolibdeps/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# Local Python venv used for esptool / pio bootstrap
+/.venv/
+
+# Per-project secrets — also covered by sub-project .gitignores
+**/include/config.h
+
+# Ed25519 keypair used to sign QWeather JWTs (server reads the private key)
+ed25519-*.pem
+
+# Claude Code working directory
+.claude/

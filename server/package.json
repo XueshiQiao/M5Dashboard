@@ -1,0 +1,25 @@
+{
+  "name": "m5dashboard-server",
+  "version": "0.1.0",
+  "description": "HTTP API for the M5Stack Tab5 dashboard. Reads Claude Code OAuth state from the local macOS keychain and proxies the Anthropic Usage API; proxies Open-Meteo for weather.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env --import tsx src/index.ts",
+    "start": "node --env-file=.env --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "fastify": "^5.2.0",
+    "jose": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
