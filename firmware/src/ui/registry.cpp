@@ -38,6 +38,26 @@ bool activateLayout(const char* name) {
   return true;
 }
 
+bool activateNextLayout() {
+  if (!g_active || g_count == 0) return false;
+  int idx = -1;
+  for (int i = 0; i < g_count; ++i) {
+    if (g_layouts[i] == g_active) { idx = i; break; }
+  }
+  if (idx < 0) return false;
+  return activateLayout(g_layouts[(idx + 1) % g_count]->name);
+}
+
+bool activatePreviousLayout() {
+  if (!g_active || g_count == 0) return false;
+  int idx = -1;
+  for (int i = 0; i < g_count; ++i) {
+    if (g_layouts[i] == g_active) { idx = i; break; }
+  }
+  if (idx < 0) return false;
+  return activateLayout(g_layouts[(idx - 1 + g_count) % g_count]->name);
+}
+
 void deliverWeather(const data::WeatherData& d) {
   if (g_active && g_active->onWeather) g_active->onWeather(d);
 }

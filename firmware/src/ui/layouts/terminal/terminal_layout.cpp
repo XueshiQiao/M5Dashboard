@@ -54,8 +54,6 @@ struct Handles {
   lv_obj_t* u_codex_id;
   lv_obj_t* u_codex_session;
   lv_obj_t* u_codex_weekly;
-
-  lv_obj_t* t_line;      // 1-line tail
 };
 
 Handles g_h = {};
@@ -103,15 +101,6 @@ void renderBar(char* buf, size_t cap, int pct, int cells) {
   buf[off] = '\0';
 }
 
-void clockStamp(char* buf, size_t cap) {
-  uint32_t s  = millis() / 1000;
-  uint32_t hh = (s / 3600) % 24;
-  uint32_t mm = (s / 60) % 60;
-  uint32_t ss = s % 60;
-  snprintf(buf, cap, "%02u:%02u:%02u",
-           (unsigned)hh, (unsigned)mm, (unsigned)ss);
-}
-
 void formatUptime(uint32_t ms, char* buf, size_t cap) {
   uint32_t s  = ms / 1000;
   uint32_t hh = s / 3600;
@@ -119,15 +108,6 @@ void formatUptime(uint32_t ms, char* buf, size_t cap) {
   uint32_t ss = s % 60;
   snprintf(buf, cap, "%02u:%02u:%02u",
            (unsigned)hh, (unsigned)mm, (unsigned)ss);
-}
-
-void logEvent(const char* msg) {
-  if (!g_h.t_line) return;
-  char ts[16];
-  clockStamp(ts, sizeof(ts));
-  char line[128];
-  snprintf(line, sizeof(line), "[%s] %s", ts, msg);
-  setText(g_h.t_line, line, kVal);
 }
 
 // ─── device info ─────────────────────────────────────────────────────────
@@ -223,11 +203,6 @@ void buildUsage(lv_obj_t* scr) {
                   "codex   waiting...");
 }
 
-void buildTail(lv_obj_t* scr) {
-  g_h.t_line = mkLabel(scr, "[--:--:--] (waiting for poller events)",
-                       kMuted, col(0), row(17), 64 * kCharW);
-}
-
 void buildScreen() {
   g_font_body = lv_font_tamzen_40b;
 
@@ -241,7 +216,6 @@ void buildScreen() {
   buildBanner(scr);
   buildWeather(scr);
   buildUsage(scr);
-  buildTail(scr);
 
   refreshDevice();
   if (g_status_timer) lv_timer_del(g_status_timer);
@@ -277,10 +251,6 @@ void onWeather(const data::WeatherData& d) {
            d.forecast[1].day, (int)d.forecast[1].highC, (int)d.forecast[1].lowC, d.forecast[1].glyph,
            d.forecast[2].day, (int)d.forecast[2].highC, (int)d.forecast[2].lowC, d.forecast[2].glyph);
   setText(g_h.w_forecast, fc, kAccent);
-
-  char ev[80];
-  snprintf(ev, sizeof(ev), "weather %s %d\xC2\xB0""C", d.city, (int)d.tempC);
-  logEvent(ev);
 }
 
 void renderUsageLine(lv_obj_t* lbl, const char* label, int pct, const char* reset) {
@@ -310,10 +280,6 @@ void onClaude(const data::ClaudeData& d) {
                                          d.session.utilizationPct, d.session.resetIn);
   if (d.weekly.present)  renderUsageLine(g_h.u_claude_weekly,  "weekly",
                                          d.weekly.utilizationPct, d.weekly.resetIn);
-  char ev[64];
-  snprintf(ev, sizeof(ev), "claude  s%d%% w%d%%",
-           (int)d.session.utilizationPct, (int)d.weekly.utilizationPct);
-  logEvent(ev);
 }
 
 void onCodex(const data::CodexData& d) {
@@ -323,10 +289,6 @@ void onCodex(const data::CodexData& d) {
                                          d.session.utilizationPct, d.session.resetIn);
   if (d.weekly.present)  renderUsageLine(g_h.u_codex_weekly,  "weekly",
                                          d.weekly.utilizationPct, d.weekly.resetIn);
-  char ev[64];
-  snprintf(ev, sizeof(ev), "codex   s%d%% w%d%%",
-           (int)d.session.utilizationPct, (int)d.weekly.utilizationPct);
-  logEvent(ev);
 }
 
 }  // namespace

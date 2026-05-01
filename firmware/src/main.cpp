@@ -19,6 +19,22 @@
 
 namespace {
 constexpr const char* kFallbackLayout = "grid";
+
+void gesture_cb(lv_event_t* e) {
+  (void)e;
+  lv_indev_t* indev = lv_indev_active();
+  if (!indev) return;
+  const lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+  if (dir == LV_DIR_LEFT) {
+    ui::activateNextLayout();
+    Serial.printf("[ui] swipe → next layout: %s\n",
+                  ui::activeLayout() ? ui::activeLayout()->name : "<none>");
+  } else if (dir == LV_DIR_RIGHT) {
+    ui::activatePreviousLayout();
+    Serial.printf("[ui] swipe → previous layout: %s\n",
+                  ui::activeLayout() ? ui::activeLayout()->name : "<none>");
+  }
+}
 }  // namespace
 
 void setup() {
@@ -50,6 +66,11 @@ void setup() {
   }
   Serial.printf("[ui] active layout: %s\n",
                 ui::activeLayout() ? ui::activeLayout()->name : "<none>");
+
+  // Persistent screen-level gesture handler — LVGL preserves event
+  // callbacks across lv_obj_clean(), so this stays attached even when a
+  // layout's build() wipes the screen children.
+  lv_obj_add_event_cb(lv_screen_active(), gesture_cb, LV_EVENT_GESTURE, NULL);
 
   poller_start();
 

@@ -8,6 +8,8 @@ void registerLayout(const Layout* layout);
 const Layout* findLayout(const char* name);
 const Layout* activeLayout();
 bool activateLayout(const char* name);
+bool activateNextLayout();
+bool activatePreviousLayout();
 
 void deliverWeather(const data::WeatherData& d);
 void deliverClaude (const data::ClaudeData&  d);
