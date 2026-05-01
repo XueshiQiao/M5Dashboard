@@ -7,6 +7,7 @@
 #include "ui/layouts/grid/grid_layout.h"
 
 #include "m5_io.h"
+#include "ui/fonts/fonts.h"
 
 #include <esp_heap_caps.h>
 #include <stdio.h>
@@ -305,13 +306,14 @@ void buildWeather(lv_obj_t* scr) {
   lv_obj_set_pos(g_wx.icon, 24, 78);
   lv_obj_set_size(g_wx.icon, kWeatherIconPx, kWeatherIconPx);
 
-  g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_montserrat_48, kCyan);
-  lv_obj_set_size(g_wx.temp, 160, 56);
-  lv_obj_set_pos(g_wx.temp, 154, 62);
+  // 4× Tamzen Bold (40×80 per glyph, ~72 px line height) — the hero number.
+  g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_tamzen_80b, kCyan);
+  lv_obj_set_size(g_wx.temp, 240, 80);
+  lv_obj_set_pos(g_wx.temp, 154, 50);
 
   g_wx.condition = makeLabel(panel, "waiting", &lv_font_montserrat_18, kText);
-  lv_obj_set_size(g_wx.condition, 176, 26);
-  lv_obj_set_pos(g_wx.condition, 158, 122);
+  lv_obj_set_size(g_wx.condition, 200, 26);
+  lv_obj_set_pos(g_wx.condition, 158, 138);
 
   g_wx.details = makeLabel(panel, "feels: -\nhumidity: -\nwind: -",
                            &lv_font_montserrat_16, kMuted);

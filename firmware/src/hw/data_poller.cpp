@@ -270,6 +270,22 @@ void task_main(void* /*arg*/) {
         if (fetchAndParseNews(http_buf, sizeof(http_buf)))    lastNews = now;
         else                                                  lastNews = now - kNewsPollMs + 5000;
       }
+
+      // Weather-icon retry: kicks the icon fetch every tick (2 s) so a
+      // layout swap that newly enables iconSizes.weatherPx fills in
+      // promptly instead of waiting up to 15 min for the next weather
+      // poll. fetchAndStageIcon is a no-op when weatherPx == 0.
+      char wanted_code[8];
+      char have_code[8];
+      xSemaphoreTake(g_mu, portMAX_DELAY);
+      strncpy(wanted_code, g_wx_snap.iconCode, sizeof(wanted_code) - 1);
+      wanted_code[sizeof(wanted_code) - 1] = '\0';
+      strncpy(have_code, g_icon_last_code, sizeof(have_code) - 1);
+      have_code[sizeof(have_code) - 1] = '\0';
+      xSemaphoreGive(g_mu);
+      if (wanted_code[0] && strcmp(wanted_code, have_code) != 0) {
+        fetchAndStageIcon(wanted_code);
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
