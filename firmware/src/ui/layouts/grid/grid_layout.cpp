@@ -323,21 +323,30 @@ void buildWeather(lv_obj_t* scr) {
     g_weather_icon_dsc.data_size = 0;
   }
 
-  // ── Top half: hero on left (icon + city + temp), stats column on right.
-  constexpr int kTopH    = 280;
-  const     int statsX   = kLeftColW * 55 / 100;
+  // ── Top half: hero on left (icon + city/temp side-by-side), stats on right.
+  constexpr int kTopH      = 280;
+  constexpr int kIconX     = 30;
+  constexpr int kIconY     = 30;
+  const     int statsX     = kLeftColW * 55 / 100;
+  // city/temp stacked vertically and centered against the icon's vertical span.
+  constexpr int kCityH     = 36;
+  constexpr int kTempH     = 60;
+  constexpr int kStackGap  = 8;
+  constexpr int kStackH    = kCityH + kStackGap + kTempH;
+  constexpr int kHeroTextX = kIconX + kWeatherIconPx + 18;
+  constexpr int kStackY    = kIconY + (kWeatherIconPx - kStackH) / 2;
 
   g_wx.icon = lv_image_create(panel);
-  lv_obj_set_pos(g_wx.icon, 30, 30);
+  lv_obj_set_pos(g_wx.icon, kIconX, kIconY);
   lv_obj_set_size(g_wx.icon, kWeatherIconPx, kWeatherIconPx);
 
   g_wx.city = makeLabel(panel, "-", &lv_font_montserrat_28, kText);
-  lv_obj_set_size(g_wx.city, statsX - 30 - 8, 36);
-  lv_obj_set_pos(g_wx.city, 30, 30 + kWeatherIconPx + 8);
+  lv_obj_set_size(g_wx.city, statsX - kHeroTextX - 8, kCityH);
+  lv_obj_set_pos(g_wx.city, kHeroTextX, kStackY);
 
   g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_montserrat_48, kCyan);
-  lv_obj_set_size(g_wx.temp, statsX - 30 - 8, 60);
-  lv_obj_set_pos(g_wx.temp, 30, 30 + kWeatherIconPx + 50);
+  lv_obj_set_size(g_wx.temp, statsX - kHeroTextX - 8, kTempH);
+  lv_obj_set_pos(g_wx.temp, kHeroTextX, kStackY + kCityH + kStackGap);
 
   // Stats column (range / aqi / wind / humidity), evenly spaced.
   const int kStatsW    = kLeftColW - statsX - 24;
@@ -346,7 +355,7 @@ void buildWeather(lv_obj_t* scr) {
   g_wx.range    = makeLabel(panel, "range  -",    &lv_font_montserrat_24, kText);
   lv_obj_set_size(g_wx.range, kStatsW, kStatsRowH);
   lv_obj_set_pos(g_wx.range, statsX, kStatsTop);
-  g_wx.aqi      = makeLabel(panel, "aqi  -",      &lv_font_montserrat_24, kYellow);
+  g_wx.aqi      = makeLabel(panel, "AQI  -",      &lv_font_montserrat_24, kYellow);
   lv_obj_set_size(g_wx.aqi, kStatsW, kStatsRowH);
   lv_obj_set_pos(g_wx.aqi, statsX, kStatsTop + kStatsRowH);
   g_wx.wind     = makeLabel(panel, "wind  -",     &lv_font_montserrat_24, kText);
@@ -369,15 +378,29 @@ void buildWeather(lv_obj_t* scr) {
   lv_obj_set_style_bg_color(divider, lv_color_hex(kGrid), 0);
   lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
 
-  // ── Bottom half: 5-day forecast with PNG icons. ────────────────────────
-  const int kFcAreaY  = kTopH + 52;
-  const int kFcColW   = (kLeftColW - 40) / 5;
-  const int kFcDayY   = kFcAreaY;
-  const int kFcIconY  = kFcDayY + 32;
-  const int kFcTempY  = kFcIconY + kForecastIconPx + 6;
+  // ── Bottom half: 5-day forecast — centered horizontally and vertically.
+  constexpr int kFcDayH   = 28;
+  constexpr int kFcGap1   = 6;
+  constexpr int kFcGap2   = 8;
+  constexpr int kFcTempH  = 32;
+  constexpr int kFcBlockH = kFcDayH + kFcGap1 + kForecastIconPx + kFcGap2 + kFcTempH;
+
+  // Available bottom region runs from just below the divider to the panel bottom.
+  const int kBottomTop    = kTopH + 36;          // y of the divider
+  const int kBottomH      = kCardsH - kBottomTop;
+  const int kFcAreaY      = kBottomTop + (kBottomH - kFcBlockH) / 2;
+
+  // Five evenly-sized columns, each ~144 px wide. Total block width spans
+  // 5 * kFcColW; center it inside (kLeftColW) by offsetting from the left edge.
+  constexpr int kFcColW   = 144;
+  const int kFcStripX     = (kLeftColW - 5 * kFcColW) / 2;
+
+  const int kFcDayY  = kFcAreaY;
+  const int kFcIconY = kFcDayY  + kFcDayH  + kFcGap1;
+  const int kFcTempY = kFcIconY + kForecastIconPx + kFcGap2;
 
   for (int i = 0; i < 5; ++i) {
-    const int x = 20 + i * kFcColW;
+    const int x = kFcStripX + i * kFcColW;
 
     g_wx.forecast_day[i] = makeLabel(panel, "—", &lv_font_montserrat_22, kText,
                                      LV_TEXT_ALIGN_CENTER);
@@ -551,14 +574,14 @@ void updateWeatherCard(const data::WeatherData& d) {
   lv_label_set_text(g_wx.humidity, buf);
 
   if (d.air.present) {
-    snprintf(buf, sizeof(buf), "aqi  %u  %s", (unsigned)d.air.aqi, d.air.category);
+    snprintf(buf, sizeof(buf), "AQI  %u  %s", (unsigned)d.air.aqi, d.air.category);
     lv_label_set_text(g_wx.aqi, buf);
     uint32_t hex = ((uint32_t)d.air.r << 16) |
                    ((uint32_t)d.air.g << 8) |
                    (uint32_t)d.air.b;
     lv_obj_set_style_text_color(g_wx.aqi, lv_color_hex(hex), 0);
   } else {
-    lv_label_set_text(g_wx.aqi, "aqi  -");
+    lv_label_set_text(g_wx.aqi, "AQI  -");
     lv_obj_set_style_text_color(g_wx.aqi, lv_color_hex(kYellow), 0);
   }
 
