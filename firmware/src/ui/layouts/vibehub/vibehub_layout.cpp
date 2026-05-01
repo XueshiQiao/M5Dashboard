@@ -493,6 +493,18 @@ void applyUsage(const UsageHandles& h, const data::ClaudeData& d) {
       lv_color_hex(d.extraEnabled ? kGreen : kDim), 0);
 }
 
+void destroyGridScreen() {
+  if (g_status_timer) {
+    lv_timer_del(g_status_timer);
+    g_status_timer = nullptr;
+  }
+  g_status = {};
+  g_wx = {};
+  g_claude = {};
+  g_codex = {};
+  g_news = {};
+}
+
 void buildGridScreen() {
   lv_obj_t* scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
@@ -511,9 +523,7 @@ void buildGridScreen() {
   initBrandIcon(g_brand_claude);
   initBrandIcon(g_brand_codex);
   updateStatus();
-  if (!g_status_timer) {
-    g_status_timer = lv_timer_create(statusTimerCb, 2000, nullptr);
-  }
+  g_status_timer = lv_timer_create(statusTimerCb, 2000, nullptr);
 }
 
 void updateWeatherCard(const data::WeatherData& d) {
@@ -613,6 +623,7 @@ void setCodexIconPng(const uint8_t* png, size_t len) {
 const Layout kVibehubLayout = {
   "vibehub",
   buildGridScreen,
+  destroyGridScreen,
   updateWeatherCard,
   updateClaudeCard,
   updateCodexCard,

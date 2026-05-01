@@ -16,6 +16,7 @@ struct Layout {
   const char* name;
 
   void (*build)();
+  void (*destroy)();   // called by registry before swap; tear down lv_timers etc.
 
   void (*onWeather)(const data::WeatherData&);
   void (*onClaude) (const data::ClaudeData&);

@@ -203,11 +203,19 @@ void buildUsage(lv_obj_t* scr) {
                   "codex   waiting...");
 }
 
+void destroy() {
+  if (g_status_timer) {
+    lv_timer_del(g_status_timer);
+    g_status_timer = nullptr;
+  }
+  memset(&g_h, 0, sizeof(g_h));
+}
+
 void buildScreen() {
   g_font_body = lv_font_tamzen_40b;
 
   lv_obj_t* scr = lv_screen_active();
-  lv_obj_clean(scr);
+  // Registry already cleans the screen before invoking build().
   lv_obj_set_style_bg_color(scr, lv_color_hex(kBg), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
@@ -218,7 +226,6 @@ void buildScreen() {
   buildUsage(scr);
 
   refreshDevice();
-  if (g_status_timer) lv_timer_del(g_status_timer);
   g_status_timer = lv_timer_create(statusTimerCb, 1000, nullptr);
 }
 
@@ -296,6 +303,7 @@ void onCodex(const data::CodexData& d) {
 const Layout kTerminalLayout = {
   "terminal",
   buildScreen,
+  destroy,
   onWeather,
   onClaude,
   onCodex,
