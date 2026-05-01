@@ -17,8 +17,9 @@
 namespace ui {
 namespace {
 
-constexpr int kWeatherIconPx = 112;
-constexpr int kBrandIconPx   = 34;
+constexpr int kWeatherIconPx  = 128;
+constexpr int kBrandIconPx    = 34;
+constexpr int kForecastIconPx = 64;
 
 struct StatusHandles {
   lv_obj_t* wifi;
@@ -29,10 +30,14 @@ struct WeatherHandles {
   lv_obj_t* city;
   lv_obj_t* temp;
   lv_obj_t* condition;
-  lv_obj_t* details;
+  lv_obj_t* range;          // "H 18°C / L 12°C"
   lv_obj_t* aqi;
+  lv_obj_t* humidity;
+  lv_obj_t* wind;
   lv_obj_t* icon;
-  lv_obj_t* forecast[5];
+  lv_obj_t* forecast_day[5];
+  lv_obj_t* forecast_temp[5];
+  lv_obj_t* forecast_icon[5];
 };
 
 struct UsageHandles {
@@ -92,6 +97,14 @@ constexpr size_t kIconBufBytes = 14 * 1024;
 uint8_t* g_weather_icon_buf = nullptr;
 size_t g_weather_icon_len = 0;
 lv_image_dsc_t g_weather_icon_dsc = {};
+
+constexpr size_t kForecastIconBufBytes = 8 * 1024;
+struct ForecastIconBuf {
+  uint8_t*       buf = nullptr;
+  size_t         len = 0;
+  lv_image_dsc_t dsc = {};
+};
+ForecastIconBuf g_forecast_icon[5];
 
 constexpr size_t kBrandBufBytes = 8 * 1024;
 struct BrandIcon {
@@ -310,42 +323,88 @@ void buildWeather(lv_obj_t* scr) {
     g_weather_icon_dsc.data_size = 0;
   }
 
-  // City — title-sized, top-left.
-  g_wx.city = makeLabel(panel, "-", &lv_font_montserrat_36, kText);
-  lv_obj_set_size(g_wx.city, kLeftColW - 40, 44);
-  lv_obj_set_pos(g_wx.city, 24, 18);
+  // ── Top half: hero on left (icon + city + temp), stats column on right.
+  constexpr int kTopH    = 280;
+  const     int statsX   = kLeftColW * 55 / 100;
 
-  // Icon left of the temp number.
   g_wx.icon = lv_image_create(panel);
-  lv_obj_set_pos(g_wx.icon, 32, 80);
+  lv_obj_set_pos(g_wx.icon, 30, 30);
   lv_obj_set_size(g_wx.icon, kWeatherIconPx, kWeatherIconPx);
 
+  g_wx.city = makeLabel(panel, "-", &lv_font_montserrat_28, kText);
+  lv_obj_set_size(g_wx.city, statsX - 30 - 8, 36);
+  lv_obj_set_pos(g_wx.city, 30, 30 + kWeatherIconPx + 8);
+
   g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_montserrat_48, kCyan);
-  lv_obj_set_size(g_wx.temp, 280, 60);
-  lv_obj_set_pos(g_wx.temp, 180, 110);
+  lv_obj_set_size(g_wx.temp, statsX - 30 - 8, 60);
+  lv_obj_set_pos(g_wx.temp, 30, 30 + kWeatherIconPx + 50);
 
-  // Condition + details below the hero row.
-  g_wx.condition = makeLabel(panel, "waiting", &lv_font_montserrat_24, kText);
-  lv_obj_set_size(g_wx.condition, kLeftColW - 60, 30);
-  lv_obj_set_pos(g_wx.condition, 24, 218);
+  // Stats column (range / aqi / wind / humidity), evenly spaced.
+  const int kStatsW    = kLeftColW - statsX - 24;
+  const int kStatsRowH = 50;
+  const int kStatsTop  = 40;
+  g_wx.range    = makeLabel(panel, "range  -",    &lv_font_montserrat_24, kText);
+  lv_obj_set_size(g_wx.range, kStatsW, kStatsRowH);
+  lv_obj_set_pos(g_wx.range, statsX, kStatsTop);
+  g_wx.aqi      = makeLabel(panel, "aqi  -",      &lv_font_montserrat_24, kYellow);
+  lv_obj_set_size(g_wx.aqi, kStatsW, kStatsRowH);
+  lv_obj_set_pos(g_wx.aqi, statsX, kStatsTop + kStatsRowH);
+  g_wx.wind     = makeLabel(panel, "wind  -",     &lv_font_montserrat_24, kText);
+  lv_obj_set_size(g_wx.wind, kStatsW, kStatsRowH);
+  lv_obj_set_pos(g_wx.wind, statsX, kStatsTop + kStatsRowH * 2);
+  g_wx.humidity = makeLabel(panel, "humidity  -", &lv_font_montserrat_24, kText);
+  lv_obj_set_size(g_wx.humidity, kStatsW, kStatsRowH);
+  lv_obj_set_pos(g_wx.humidity, statsX, kStatsTop + kStatsRowH * 3);
 
-  g_wx.details = makeLabel(panel, "range: -    humidity: -    wind: -",
-                           &lv_font_montserrat_20, kMuted);
-  lv_obj_set_size(g_wx.details, kLeftColW - 60, 30);
-  lv_obj_set_pos(g_wx.details, 24, 254);
+  g_wx.condition = makeLabel(panel, "waiting", &lv_font_montserrat_22, kMuted,
+                             LV_TEXT_ALIGN_CENTER);
+  lv_obj_set_size(g_wx.condition, kLeftColW - 48, 28);
+  lv_obj_set_pos(g_wx.condition, 24, kTopH);
 
-  g_wx.aqi = makeLabel(panel, "AQI -", &lv_font_montserrat_22, kYellow);
-  lv_obj_set_size(g_wx.aqi, kLeftColW - 60, 30);
-  lv_obj_set_pos(g_wx.aqi, 24, 296);
+  // Divider between top and bottom halves.
+  lv_obj_t* divider = lv_obj_create(panel);
+  lv_obj_remove_style_all(divider);
+  lv_obj_set_pos(divider, 24, kTopH + 36);
+  lv_obj_set_size(divider, kLeftColW - 48, 1);
+  lv_obj_set_style_bg_color(divider, lv_color_hex(kGrid), 0);
+  lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
 
-  // 5-day forecast strip across the bottom of the panel.
-  const int kForecastY    = kCardsH - 90;
-  const int kForecastColW = (kLeftColW - 40) / 5;
+  // ── Bottom half: 5-day forecast with PNG icons. ────────────────────────
+  const int kFcAreaY  = kTopH + 52;
+  const int kFcColW   = (kLeftColW - 40) / 5;
+  const int kFcDayY   = kFcAreaY;
+  const int kFcIconY  = kFcDayY + 32;
+  const int kFcTempY  = kFcIconY + kForecastIconPx + 6;
+
   for (int i = 0; i < 5; ++i) {
-    g_wx.forecast[i] = makeLabel(panel, "--  -/-", &lv_font_montserrat_18, kText,
-                                 LV_TEXT_ALIGN_CENTER);
-    lv_obj_set_size(g_wx.forecast[i], kForecastColW - 8, 60);
-    lv_obj_set_pos(g_wx.forecast[i], 20 + i * kForecastColW, kForecastY);
+    const int x = 20 + i * kFcColW;
+
+    g_wx.forecast_day[i] = makeLabel(panel, "—", &lv_font_montserrat_22, kText,
+                                     LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_size(g_wx.forecast_day[i], kFcColW, 28);
+    lv_obj_set_pos(g_wx.forecast_day[i], x, kFcDayY);
+
+    g_wx.forecast_icon[i] = lv_image_create(panel);
+    lv_obj_set_size(g_wx.forecast_icon[i], kForecastIconPx, kForecastIconPx);
+    lv_obj_set_pos(g_wx.forecast_icon[i],
+                   x + (kFcColW - kForecastIconPx) / 2, kFcIconY);
+
+    g_wx.forecast_temp[i] = makeLabel(panel, "-/-", &lv_font_montserrat_22, kCyan,
+                                      LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_size(g_wx.forecast_temp[i], kFcColW, 32);
+    lv_obj_set_pos(g_wx.forecast_temp[i], x, kFcTempY);
+
+    if (!g_forecast_icon[i].buf) {
+      g_forecast_icon[i].buf = static_cast<uint8_t*>(
+          heap_caps_malloc(kForecastIconBufBytes,
+                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      g_forecast_icon[i].dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+      g_forecast_icon[i].dsc.header.cf    = LV_COLOR_FORMAT_RAW_ALPHA;
+      g_forecast_icon[i].dsc.header.w     = kForecastIconPx;
+      g_forecast_icon[i].dsc.header.h     = kForecastIconPx;
+      g_forecast_icon[i].dsc.data         = g_forecast_icon[i].buf;
+      g_forecast_icon[i].dsc.data_size    = 0;
+    }
   }
 }
 
@@ -475,45 +534,59 @@ void updateWeatherCard(const data::WeatherData& d) {
   if (!d.valid || !g_wx.city) return;
   updateStatus();
 
-  char city[64];
-  snprintf(city, sizeof(city), "%s", d.city);
-  lv_label_set_text(g_wx.city, city);
+  lv_label_set_text(g_wx.city, d.city);
 
-  char temp[16];
-  snprintf(temp, sizeof(temp), "%d" "\xC2\xB0" "C", (int)d.tempC);
-  lv_label_set_text(g_wx.temp, temp);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%d" "\xC2\xB0" "C", (int)d.tempC);
+  lv_label_set_text(g_wx.temp, buf);
   lv_label_set_text(g_wx.condition, d.condition);
 
-  char details[96];
-  snprintf(details, sizeof(details),
-           "range: %d/%d" "\xC2\xB0" "C\nhumidity: %d%%\nwind: %d km/h",
-           (int)d.highC, (int)d.lowC,
-           (int)d.humidityPct, (int)d.windKmh);
-  lv_label_set_text(g_wx.details, details);
+  snprintf(buf, sizeof(buf), "range  %d / %d" "\xC2\xB0" "C", (int)d.highC, (int)d.lowC);
+  lv_label_set_text(g_wx.range, buf);
+
+  snprintf(buf, sizeof(buf), "wind  %d km/h", (int)d.windKmh);
+  lv_label_set_text(g_wx.wind, buf);
+
+  snprintf(buf, sizeof(buf), "humidity  %d %%", (int)d.humidityPct);
+  lv_label_set_text(g_wx.humidity, buf);
 
   if (d.air.present) {
-    char aqi[54];
-    snprintf(aqi, sizeof(aqi), "AQI %u  %s",
-             (unsigned)d.air.aqi, d.air.category);
-    lv_label_set_text(g_wx.aqi, aqi);
+    snprintf(buf, sizeof(buf), "aqi  %u  %s", (unsigned)d.air.aqi, d.air.category);
+    lv_label_set_text(g_wx.aqi, buf);
     uint32_t hex = ((uint32_t)d.air.r << 16) |
                    ((uint32_t)d.air.g << 8) |
                    (uint32_t)d.air.b;
     lv_obj_set_style_text_color(g_wx.aqi, lv_color_hex(hex), 0);
   } else {
-    lv_label_set_text(g_wx.aqi, "AQI -");
+    lv_label_set_text(g_wx.aqi, "aqi  -");
     lv_obj_set_style_text_color(g_wx.aqi, lv_color_hex(kYellow), 0);
   }
 
   for (int i = 0; i < 5; ++i) {
-    char fc[36];
-    snprintf(fc, sizeof(fc), "%s\n%d/%d %s",
-             d.forecast[i].day,
-             (int)d.forecast[i].highC,
-             (int)d.forecast[i].lowC,
-             d.forecast[i].glyph);
-    lv_label_set_text(g_wx.forecast[i], fc);
+    if (g_wx.forecast_day[i])  lv_label_set_text(g_wx.forecast_day[i], d.forecast[i].day);
+    if (g_wx.forecast_temp[i]) {
+      char fc[24];
+      snprintf(fc, sizeof(fc), "%d / %d", (int)d.forecast[i].highC, (int)d.forecast[i].lowC);
+      lv_label_set_text(g_wx.forecast_temp[i], fc);
+    }
   }
+}
+
+void setForecastIconPng(int idx, const uint8_t* png, size_t len) {
+  if (idx < 0 || idx >= 5) return;
+  if (!g_wx.forecast_icon[idx] || !g_forecast_icon[idx].buf) return;
+  if (len > kForecastIconBufBytes) return;
+  if (len == 0) {
+    lv_image_set_src(g_wx.forecast_icon[idx], nullptr);
+    g_forecast_icon[idx].len = 0;
+    return;
+  }
+  memcpy(g_forecast_icon[idx].buf, png, len);
+  g_forecast_icon[idx].len = len;
+  g_forecast_icon[idx].dsc.data      = g_forecast_icon[idx].buf;
+  g_forecast_icon[idx].dsc.data_size = len;
+  lv_image_set_src(g_wx.forecast_icon[idx], nullptr);
+  lv_image_set_src(g_wx.forecast_icon[idx], &g_forecast_icon[idx].dsc);
 }
 
 void updateClaudeCard(const data::ClaudeData& d) { applyUsage(g_claude, d); }
@@ -557,7 +630,8 @@ const Layout kGridLayout = {
   setWeatherIconPng,
   setClaudeIconPng,
   setCodexIconPng,
-  { kWeatherIconPx, kBrandIconPx },
+  setForecastIconPng,
+  { kWeatherIconPx, kBrandIconPx, kForecastIconPx },
 };
 
 }  // namespace ui

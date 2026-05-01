@@ -311,7 +311,8 @@ const Layout kTerminalLayout = {
   nullptr,
   nullptr,
   nullptr,
-  { 0, 0 },
+  nullptr,
+  { 0, 0, 0 },
 };
 
 }  // namespace ui

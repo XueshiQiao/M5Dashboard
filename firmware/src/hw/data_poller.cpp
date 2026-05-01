@@ -54,6 +54,17 @@ size_t   g_icon_stage_len = 0;
 bool     g_icon_dirty     = false;
 char     g_icon_last_code[8] = "";   // last code we successfully fetched
 
+// Forecast icon staging — one slot per forecast day (5).
+constexpr int    kForecastSlots         = 5;
+constexpr size_t kForecastStageBytes    = 8 * 1024;
+struct ForecastStage {
+  uint8_t* buf       = nullptr;
+  size_t   len       = 0;
+  bool     dirty     = false;
+  char     last_code[8] = "";
+};
+ForecastStage g_forecast_stage[kForecastSlots];
+
 // Brand-icon staging — one-shot per session for Claude and Codex. PNGs
 // from /api/icon/{claude,codex} are tiny (~1.5–2 KB).
 constexpr size_t kBrandStageBytes = 8 * 1024;
@@ -92,6 +103,41 @@ bool fetchBrandIcon(BrandStage& b) {
   b.dirty = true;
   xSemaphoreGive(g_mu);
   Serial.printf("[poller] brand %s: %u bytes\n", b.name, (unsigned)len);
+  return true;
+}
+
+bool fetchAndStageForecastIcon(int idx, const char* code) {
+  if (idx < 0 || idx >= kForecastSlots) return false;
+  if (!code || !code[0]) return false;
+  const int forecast_px = ui::activeIconSizes().forecastPx;
+  if (forecast_px <= 0) return false;
+  ForecastStage& fs = g_forecast_stage[idx];
+  if (!fs.buf) {
+    fs.buf = static_cast<uint8_t*>(
+        heap_caps_malloc(kForecastStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!fs.buf) {
+      Serial.printf("[poller] forecast[%d]: PSRAM alloc failed\n", idx);
+      return false;
+    }
+  }
+  char url[200];
+  snprintf(url, sizeof(url),
+           "%s/api/weather/icon/%s?size=%d",
+           cfg::SERVER_URL, code, forecast_px);
+  size_t len = 0;
+  if (!m5io::httpGetBinary(url, cfg::AUTH_TOKEN, fs.buf,
+                           kForecastStageBytes, &len)) {
+    Serial.printf("[poller] forecast[%d] code=%s: HTTP failed\n", idx, code);
+    return false;
+  }
+  xSemaphoreTake(g_mu, portMAX_DELAY);
+  fs.len   = len;
+  fs.dirty = true;
+  strncpy(fs.last_code, code, sizeof(fs.last_code) - 1);
+  fs.last_code[sizeof(fs.last_code) - 1] = '\0';
+  xSemaphoreGive(g_mu);
+  Serial.printf("[poller] forecast[%d] code=%s bytes=%u\n",
+                idx, code, (unsigned)len);
   return true;
 }
 
@@ -286,6 +332,23 @@ void task_main(void* /*arg*/) {
       if (wanted_code[0] && strcmp(wanted_code, have_code) != 0) {
         fetchAndStageIcon(wanted_code);
       }
+
+      // Same retry for the 5 forecast-day icons.
+      char fwant[kForecastSlots][8];
+      char fhave[kForecastSlots][8];
+      xSemaphoreTake(g_mu, portMAX_DELAY);
+      for (int i = 0; i < kForecastSlots; ++i) {
+        strncpy(fwant[i], g_wx_snap.forecast[i].iconCode, sizeof(fwant[i]) - 1);
+        fwant[i][sizeof(fwant[i]) - 1] = '\0';
+        strncpy(fhave[i], g_forecast_stage[i].last_code, sizeof(fhave[i]) - 1);
+        fhave[i][sizeof(fhave[i]) - 1] = '\0';
+      }
+      xSemaphoreGive(g_mu);
+      for (int i = 0; i < kForecastSlots; ++i) {
+        if (fwant[i][0] && strcmp(fwant[i], fhave[i]) != 0) {
+          fetchAndStageForecastIcon(i, fwant[i]);
+        }
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
@@ -312,9 +375,12 @@ void poller_drain() {
   static uint8_t icon_copy [kIconStageBytes];
   static uint8_t cl_copy   [kBrandStageBytes];
   static uint8_t cx_copy   [kBrandStageBytes];
+  static uint8_t fc_copy   [kForecastSlots][kForecastStageBytes];
   size_t icon_len = 0;
   size_t cl_icon_len = 0, cx_icon_len = 0;
   bool have_cl_icon = false, have_cx_icon = false;
+  size_t fc_len[kForecastSlots] = {};
+  bool   fc_have[kForecastSlots] = {};
 
   xSemaphoreTake(g_mu, portMAX_DELAY);
   if (g_wx_dirty)     { wx = g_wx_snap;     g_wx_dirty = false;     have_wx   = true; }
@@ -342,6 +408,16 @@ void poller_drain() {
     g_brand_codex.dirty = false;
     have_cx_icon = true;
   }
+  for (int i = 0; i < kForecastSlots; ++i) {
+    if (g_forecast_stage[i].dirty && g_forecast_stage[i].buf) {
+      size_t l = g_forecast_stage[i].len;
+      if (l > sizeof(fc_copy[i])) l = sizeof(fc_copy[i]);
+      memcpy(fc_copy[i], g_forecast_stage[i].buf, l);
+      g_forecast_stage[i].dirty = false;
+      fc_len[i]  = l;
+      fc_have[i] = true;
+    }
+  }
   xSemaphoreGive(g_mu);
 
   if (have_wx)        ui::deliverWeather(wx);
@@ -351,4 +427,7 @@ void poller_drain() {
   if (have_icon)      ui::deliverWeatherIcon(icon_copy, icon_len);
   if (have_cl_icon)   ui::deliverClaudeIcon(cl_copy, cl_icon_len);
   if (have_cx_icon)   ui::deliverCodexIcon (cx_copy, cx_icon_len);
+  for (int i = 0; i < kForecastSlots; ++i) {
+    if (fc_have[i]) ui::deliverForecastIcon(i, fc_copy[i], fc_len[i]);
+  }
 }

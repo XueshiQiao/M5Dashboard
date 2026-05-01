@@ -147,8 +147,8 @@ const Layout kTodosLayout = {
   buildScreen,
   destroy,
   nullptr, nullptr, nullptr, nullptr,    // no data callbacks
-  nullptr, nullptr, nullptr,
-  { 0, 0 },
+  nullptr, nullptr, nullptr, nullptr,
+  { 0, 0, 0 },
 };
 
 }  // namespace ui

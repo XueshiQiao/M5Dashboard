@@ -25,14 +25,17 @@ bool g_have_claude  = false;
 bool g_have_codex   = false;
 bool g_have_news    = false;
 
-constexpr size_t kIconCacheBytes  = 16 * 1024;   // weather PNG can hit ~14 KB
-constexpr size_t kBrandCacheBytes =  8 * 1024;
+constexpr size_t kIconCacheBytes    = 16 * 1024;   // weather PNG can hit ~14 KB
+constexpr size_t kBrandCacheBytes   =  8 * 1024;
+constexpr size_t kForecastCacheBytes = 8 * 1024;   // smaller per-day icons
 uint8_t* g_weather_icon_cache = nullptr;
 size_t   g_weather_icon_cache_len = 0;
 uint8_t* g_claude_icon_cache = nullptr;
 size_t   g_claude_icon_cache_len = 0;
 uint8_t* g_codex_icon_cache = nullptr;
 size_t   g_codex_icon_cache_len = 0;
+uint8_t* g_forecast_icon_cache[kForecastIconSlots] = {};
+size_t   g_forecast_icon_cache_len[kForecastIconSlots] = {};
 
 void cacheBytes(uint8_t** slot, size_t* slot_len, size_t cap,
                 const uint8_t* png, size_t len) {
@@ -92,6 +95,12 @@ bool activateLayout(const char* name) {
     l->onClaudeIcon(g_claude_icon_cache, g_claude_icon_cache_len);
   if (g_codex_icon_cache_len > 0 && l->onCodexIcon)
     l->onCodexIcon(g_codex_icon_cache, g_codex_icon_cache_len);
+  if (l->onForecastIcon) {
+    for (int i = 0; i < kForecastIconSlots; ++i) {
+      if (g_forecast_icon_cache_len[i] > 0)
+        l->onForecastIcon(i, g_forecast_icon_cache[i], g_forecast_icon_cache_len[i]);
+    }
+  }
 
   return true;
 }
@@ -148,6 +157,13 @@ void deliverClaudeIcon(const uint8_t* png, size_t len) {
 void deliverCodexIcon(const uint8_t* png, size_t len) {
   cacheBytes(&g_codex_icon_cache, &g_codex_icon_cache_len, kBrandCacheBytes, png, len);
   if (g_active && g_active->onCodexIcon) g_active->onCodexIcon(png, len);
+}
+void deliverForecastIcon(int day_idx, const uint8_t* png, size_t len) {
+  if (day_idx < 0 || day_idx >= kForecastIconSlots) return;
+  cacheBytes(&g_forecast_icon_cache[day_idx],
+             &g_forecast_icon_cache_len[day_idx],
+             kForecastCacheBytes, png, len);
+  if (g_active && g_active->onForecastIcon) g_active->onForecastIcon(day_idx, png, len);
 }
 
 IconSizes activeIconSizes() {

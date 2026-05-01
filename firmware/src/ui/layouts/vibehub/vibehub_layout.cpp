@@ -631,7 +631,8 @@ const Layout kVibehubLayout = {
   setWeatherIconPng,
   setClaudeIconPng,
   setCodexIconPng,
-  { kWeatherIconPx, kBrandIconPx },
+  nullptr,                  // vibehub doesn't render forecast icons yet
+  { kWeatherIconPx, kBrandIconPx, 0 },
 };
 
 }  // namespace ui
