@@ -344,7 +344,7 @@ void buildTail(lv_obj_t* scr) {
 
 // ─── build / callbacks ───────────────────────────────────────────────────
 void buildScreen() {
-  g_font_body = lv_font_tamzen_20;
+  g_font_body = lv_font_tamzen_20b;
 
   lv_obj_t* scr = lv_screen_active();
   lv_obj_clean(scr);
