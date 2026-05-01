@@ -172,10 +172,18 @@ def emit(c_path, font_name, glyphs, ascent, descent, bbx_h):
     out.append("};")
     out.append("")
 
-    # cmap: format0_tiny for the contiguous Latin-1 range.
-    out.append("static const uint16_t glyph_id_ofs_list[] = {")
+    # cmap: FORMAT0_FULL — covers the contiguous range_start..range_end
+    # with a uint8_t[] of (glyph_id - glyph_id_start). LVGL adds glyph_id_start
+    # back at lookup time. Gaps in the range emit 0; LVGL treats 0-on-non-first
+    # as "missing glyph" per the special case in lv_font_fmt_txt.c.
+    glyph_id_start = 1
+    out.append("static const uint8_t glyph_id_ofs_list[] = {")
     for code in range(cmin, cmax + 1):
-        out.append(f"    {glyph_id_map[code]},")
+        gid = glyph_id_map[code]
+        ofs = (gid - glyph_id_start) if gid != 0 else 0
+        if ofs < 0 or ofs > 255:
+            sys.exit(f"glyph_id offset {ofs} out of range for uint8_t at U+{code:04X}")
+        out.append(f"    {ofs},")
     out.append("};")
     out.append("")
 
@@ -183,7 +191,7 @@ def emit(c_path, font_name, glyphs, ascent, descent, bbx_h):
     out.append("    {")
     out.append(f"        .range_start = 0x{cmin:04X},")
     out.append(f"        .range_length = {cmax - cmin + 1},")
-    out.append("        .glyph_id_start = 1,")
+    out.append(f"        .glyph_id_start = {glyph_id_start},")
     out.append("        .unicode_list = NULL,")
     out.append("        .glyph_id_ofs_list = glyph_id_ofs_list,")
     out.append(f"        .list_length = {cmax - cmin + 1},")

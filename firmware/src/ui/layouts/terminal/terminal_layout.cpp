@@ -1,9 +1,10 @@
 // Terminal layout — registers as ui::kTerminalLayout.
 //
-// One screen, one font (UNSCII-16), no LVGL panels. Reads top-down like a
-// real terminal session: a neofetch banner with device info, a `$ weather`
-// pane, a `$ usage --watch` pane with bar charts, and a live tail of the
-// most recent poller events.
+// One screen, Tamzen 10x20 monospace, ASCII-only glyphs (no fancy box
+// drawing or block elements that the bitmap font lacks). Reads top-down
+// like a real terminal session: neofetch banner with system info,
+// `$ weather --now` pane, `$ usage --watch` pane with ASCII progress
+// bars, and a live tail of the most recent poller events.
 
 #include "ui/layouts/terminal/terminal_layout.h"
 
@@ -22,34 +23,31 @@ namespace {
 
 // ─── theme ───────────────────────────────────────────────────────────────
 constexpr uint32_t kBg      = 0x000805;
-constexpr uint32_t kPrompt  = 0x33FF77;   // bright green for `joey@m5tab5:~$`
-constexpr uint32_t kCmd     = 0xE7E7E0;   // command being typed
-constexpr uint32_t kRule    = 0x224030;   // dim green
-constexpr uint32_t kKey     = 0x77DDFF;   // cyan keys (neofetch labels)
-constexpr uint32_t kVal     = 0xE0E5DC;   // values
-constexpr uint32_t kAccent  = 0xFFC857;   // amber for highlights
-constexpr uint32_t kLogo    = 0x4FFF8E;   // logo green
-constexpr uint32_t kMuted   = 0x6B8478;
-constexpr uint32_t kDim     = 0x3D5147;
+constexpr uint32_t kPrompt  = 0x33FF77;
+constexpr uint32_t kCmd     = 0xE7E7E0;
+constexpr uint32_t kKey     = 0x77DDFF;
+constexpr uint32_t kVal     = 0xE0E5DC;
+constexpr uint32_t kAccent  = 0xFFC857;
+constexpr uint32_t kLogo    = 0x4FFF8E;
+constexpr uint32_t kMuted   = 0x80978B;
+constexpr uint32_t kDim     = 0x4A6258;
 constexpr uint32_t kGood    = 0x55FF7F;
 constexpr uint32_t kWarn    = 0xFFD23F;
 constexpr uint32_t kCrit    = 0xFF5757;
 
-// Tamzen 8x16 covers ISO8859-1; LVGL's bundled unscii-16 (also 8x16) is
-// chained as a fallback so box-drawing (U+2500-U+257F) and block elements
-// (U+2580-U+259F) used in our rules and progress bars still render.
-lv_font_t g_font_body;     // populated in buildScreen()
+// Body font is Tamzen 10x20 — readable on the Tab5 5" panel and stays
+// monospace. No fallback needed: every glyph we draw is plain ASCII or
+// Latin-1 (Tamzen covers 0x20-0xFF).
+lv_font_t g_font_body;
 const lv_font_t* kFont = &g_font_body;
 
-// UNSCII-16 is 8×16 px monospace. +2 px line spacing keeps text legible.
-constexpr int kCharW = 8;
-constexpr int kRowH  = 18;
-constexpr int kPadL  = 16;
-constexpr int kPadT  = 8;
+constexpr int kCharW = 10;
+constexpr int kRowH  = 22;
+constexpr int kPadL  = 18;
+constexpr int kPadT  = 6;
 
 // ─── handles ─────────────────────────────────────────────────────────────
 struct Handles {
-  // device (right column of neofetch banner)
   lv_obj_t* d_uptime;
   lv_obj_t* d_resolution;
   lv_obj_t* d_layout;
@@ -60,12 +58,10 @@ struct Handles {
   lv_obj_t* d_brightness;
   lv_obj_t* d_battery;
 
-  // weather
   lv_obj_t* w_summary;
   lv_obj_t* w_aqi;
   lv_obj_t* w_forecast;
 
-  // usage
   lv_obj_t* u_claude_id;
   lv_obj_t* u_claude_session;
   lv_obj_t* u_claude_weekly;
@@ -73,18 +69,19 @@ struct Handles {
   lv_obj_t* u_codex_session;
   lv_obj_t* u_codex_weekly;
 
-  // tail
   lv_obj_t* t_lines[3];
 };
 
 Handles g_h = {};
 lv_timer_t* g_status_timer = nullptr;
 
-// ring buffer for the tail strip
 constexpr int kTailRows = 3;
-char g_tail[kTailRows][96] = { "", "", "" };
+char g_tail[kTailRows][120] = { "", "", "" };
 
 // ─── primitives ──────────────────────────────────────────────────────────
+int row(int n) { return kPadT + n * kRowH; }
+int col(int n) { return kPadL + n * kCharW; }
+
 lv_obj_t* mkLabel(lv_obj_t* parent, const char* text, uint32_t color,
                   int x, int y, int w, int rows = 1) {
   lv_obj_t* l = lv_label_create(parent);
@@ -111,20 +108,17 @@ uint32_t pctColor(int pct) {
   return kGood;
 }
 
-// 20 cells of `█` / `░`. UTF-8: U+2588 = E2 96 88, U+2591 = E2 96 91.
+// `[####################....]` ASCII bar. cells = inner cell count.
 void renderBar(char* buf, size_t cap, int pct, int cells) {
-  if (cap < (size_t)(cells * 3 + 1)) { if (cap) buf[0] = '\0'; return; }
+  if (cap < (size_t)(cells + 3)) { if (cap) buf[0] = '\0'; return; }
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   int filled = (pct * cells + 50) / 100;
   if (filled > cells) filled = cells;
   size_t off = 0;
-  for (int i = 0; i < filled; ++i) {
-    buf[off++] = 0xE2; buf[off++] = 0x96; buf[off++] = 0x88;
-  }
-  for (int i = filled; i < cells; ++i) {
-    buf[off++] = 0xE2; buf[off++] = 0x96; buf[off++] = 0x91;
-  }
+  buf[off++] = '[';
+  for (int i = 0; i < cells; ++i) buf[off++] = (i < filled) ? '#' : '.';
+  buf[off++] = ']';
   buf[off] = '\0';
 }
 
@@ -136,9 +130,11 @@ void formatUptime(uint32_t ms, char* buf, size_t cap) {
   if (hh >= 24) {
     uint32_t dd = hh / 24;
     hh = hh % 24;
-    snprintf(buf, cap, "%ud %02u:%02u:%02u", (unsigned)dd, (unsigned)hh, (unsigned)mm, (unsigned)ss);
+    snprintf(buf, cap, "%ud %02u:%02u:%02u",
+             (unsigned)dd, (unsigned)hh, (unsigned)mm, (unsigned)ss);
   } else {
-    snprintf(buf, cap, "%02u:%02u:%02u", (unsigned)hh, (unsigned)mm, (unsigned)ss);
+    snprintf(buf, cap, "%02u:%02u:%02u",
+             (unsigned)hh, (unsigned)mm, (unsigned)ss);
   }
 }
 
@@ -147,12 +143,13 @@ void clockStamp(char* buf, size_t cap) {
   uint32_t hh = (s / 3600) % 24;
   uint32_t mm = (s / 60) % 60;
   uint32_t ss = s % 60;
-  snprintf(buf, cap, "%02u:%02u:%02u", (unsigned)hh, (unsigned)mm, (unsigned)ss);
+  snprintf(buf, cap, "%02u:%02u:%02u",
+           (unsigned)hh, (unsigned)mm, (unsigned)ss);
 }
 
-// Neofetch-style key-dot-padded line: `host ........... value`.
+// `host ........ value` neofetch-style. key column is fixed at 12 chars.
 void writeKv(char* buf, size_t cap, const char* key, const char* value) {
-  constexpr int kKeyCol = 14;
+  constexpr int kKeyCol = 12;
   int klen = (int)strlen(key);
   if (klen > kKeyCol) klen = kKeyCol;
   int dots = kKeyCol - klen;
@@ -169,7 +166,7 @@ void writeKv(char* buf, size_t cap, const char* key, const char* value) {
   buf[off] = '\0';
 }
 
-// ─── tail ────────────────────────────────────────────────────────────────
+// ─── tail strip ─────────────────────────────────────────────────────────
 void pushTail(const char* line) {
   for (int i = kTailRows - 1; i > 0; --i) {
     strncpy(g_tail[i], g_tail[i - 1], sizeof(g_tail[i]) - 1);
@@ -177,7 +174,6 @@ void pushTail(const char* line) {
   }
   strncpy(g_tail[0], line, sizeof(g_tail[0]) - 1);
   g_tail[0][sizeof(g_tail[0]) - 1] = '\0';
-
   for (int i = 0; i < kTailRows; ++i) {
     if (g_h.t_lines[i]) {
       lv_label_set_text(g_h.t_lines[i], g_tail[i]);
@@ -190,12 +186,12 @@ void pushTail(const char* line) {
 void logEvent(const char* msg) {
   char ts[16];
   clockStamp(ts, sizeof(ts));
-  char line[96];
+  char line[120];
   snprintf(line, sizeof(line), "[%s] %s", ts, msg);
   pushTail(line);
 }
 
-// ─── device info refresher ──────────────────────────────────────────────
+// ─── device info ─────────────────────────────────────────────────────────
 void refreshDevice() {
   char up[24];
   formatUptime(millis(), up, sizeof(up));
@@ -204,10 +200,10 @@ void refreshDevice() {
   writeKv(buf, sizeof(buf), "uptime", up);
   setText(g_h.d_uptime, buf, kVal);
 
-  // wifi
   if (m5io::wifiConnected()) {
     char wbuf[64];
-    snprintf(wbuf, sizeof(wbuf), "%s @ %d dBm", cfg::WIFI_SSID, m5io::wifiRssi());
+    snprintf(wbuf, sizeof(wbuf), "%s @ %d dBm",
+             cfg::WIFI_SSID, m5io::wifiRssi());
     writeKv(buf, sizeof(buf), "wifi", wbuf);
     setText(g_h.d_wifi, buf, kVal);
 
@@ -222,7 +218,6 @@ void refreshDevice() {
     setText(g_h.d_ip, buf, kDim);
   }
 
-  // memory
   size_t free_psram  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
   char mbuf[48];
@@ -232,13 +227,11 @@ void refreshDevice() {
   writeKv(buf, sizeof(buf), "memory", mbuf);
   setText(g_h.d_memory, buf, kVal);
 
-  // brightness
   char br[16];
   snprintf(br, sizeof(br), "%d / 255", cfg::BRIGHTNESS_ACTIVE);
   writeKv(buf, sizeof(buf), "brightness", br);
   setText(g_h.d_brightness, buf, kVal);
 
-  // battery
   char bbuf[48];
   const auto pwr = m5io::powerState();
   if (pwr == m5io::PowerState::BatteryCable) {
@@ -254,130 +247,104 @@ void refreshDevice() {
   setText(g_h.d_battery, buf, kVal);
 }
 
-void statusTimerCb(lv_timer_t*) {
-  refreshDevice();
-}
+void statusTimerCb(lv_timer_t*) { refreshDevice(); }
 
 // ─── builders ────────────────────────────────────────────────────────────
-int row(int n) { return kPadT + n * kRowH; }
-
-void buildPrompt(lv_obj_t* scr, int r, const char* cmd) {
-  lv_obj_t* p = mkLabel(scr, "joey@m5tab5:~$", kPrompt, kPadL, row(r),
-                        14 * kCharW + 4);
-  (void)p;
-  mkLabel(scr, cmd, kCmd, kPadL + 14 * kCharW + 8, row(r),
-          24 * kCharW);
-
-  // horizontal rule on the next row — 154 cells of '─' (U+2500, E2 94 80)
-  static char rule[600];
-  int off = 0;
-  for (int i = 0; i < 154 && off + 3 < (int)sizeof(rule) - 1; ++i) {
-    rule[off++] = 0xE2; rule[off++] = 0x94; rule[off++] = 0x80;
-  }
-  rule[off] = '\0';
-  mkLabel(scr, rule, kRule, kPadL, row(r + 1), 1240);
+void mkPrompt(lv_obj_t* scr, int r, const char* cmd, int c0 = 0) {
+  mkLabel(scr, "joey@m5tab5:~$", kPrompt, col(c0), row(r), 14 * kCharW + 4);
+  mkLabel(scr, cmd, kCmd, col(c0 + 14) + 4, row(r), 50 * kCharW);
 }
 
 void buildBanner(lv_obj_t* scr) {
-  buildPrompt(scr, 0, "neofetch");
+  mkPrompt(scr, 0, "neofetch");
 
-  // Box-drawing logo.
-  static const char* kLogo1 =
-      " ███╗   ███╗  ███████╗  ██████╗   █████╗   ███████╗  ██╗  ██╗\n"
-      " ████╗ ████║  ██╔════╝  ██╔══██╗ ██╔══██╗  ██╔════╝  ██║  ██║\n"
-      " ██╔████╔██║  ███████╗  ██║  ██║ ███████║  ███████╗  ███████║\n"
-      " ██║╚██╔╝██║  ╚════██║  ██║  ██║ ██╔══██║  ╚════██║  ██╔══██║\n"
-      " ██║ ╚═╝ ██║  ███████║  ██████╔╝ ██║  ██║  ███████║  ██║  ██║\n"
-      " ╚═╝     ╚═╝  ╚══════╝  ╚═════╝  ╚═╝  ╚═╝  ╚══════╝  ╚═╝  ╚═╝";
-  lv_obj_t* logo = mkLabel(scr, kLogo1, kLogo, kPadL, row(3), 60 * kCharW + 8, 7);
-  (void)logo;
+  // ASCII figlet for "M5DASH" — 5 rows, ASCII-only, fits Tamzen perfectly.
+  static const char* kAsciiLogo =
+      " __  __ ____  ____    _    ____  _   _ \n"
+      "|  \\/  | ___||  _ \\  / \\  / ___|| | | |\n"
+      "| |\\/| |___ \\| | | |/ _ \\ \\___ \\| |_| |\n"
+      "| |  | |___ )| |_| / ___ \\ ___) |  _  |\n"
+      "|_|  |_|____/|____/_/   \\_\\____/|_| |_|";
+  mkLabel(scr, kAsciiLogo, kLogo, col(0), row(2), 42 * kCharW, 5);
 
-  // Right-column key/value lines start beside the logo.
-  constexpr int kInfoX = kPadL + 64 * kCharW;
-  constexpr int kInfoW = 1280 - kInfoX - 16;
+  // Right column starts beside the logo.
+  constexpr int kInfoCol = 44;
+  const int kInfoX = col(kInfoCol);
+  const int kInfoW = 1280 - kInfoX - 12;
 
   char buf[96];
-  writeKv(buf, sizeof(buf), "os",         "m5dashboard 1.0  (esp32-p4)");
+  writeKv(buf, sizeof(buf), "os",   "m5dashboard 1.0  (esp32-p4)");
+  mkLabel(scr, buf, kKey, kInfoX, row(2), kInfoW);
+  writeKv(buf, sizeof(buf), "host", "m5stack tab5  /  esp32-p4 + c6");
   mkLabel(scr, buf, kKey, kInfoX, row(3), kInfoW);
-  writeKv(buf, sizeof(buf), "host",       "m5stack tab5  /  esp32-p4 + c6");
-  mkLabel(scr, buf, kKey, kInfoX, row(4), kInfoW);
 
-  g_h.d_uptime     = mkLabel(scr, "uptime ........ -",        kVal, kInfoX, row(5),  kInfoW);
-  g_h.d_resolution = mkLabel(scr, "resolution .... 1280x720", kVal, kInfoX, row(6),  kInfoW);
-  g_h.d_layout     = mkLabel(scr, "layout ........ terminal", kVal, kInfoX, row(7),  kInfoW);
-  g_h.d_shell      = mkLabel(scr, "shell ......... -",        kVal, kInfoX, row(8),  kInfoW);
-  g_h.d_wifi       = mkLabel(scr, "wifi .......... -",        kVal, kInfoX, row(9),  kInfoW);
-  g_h.d_ip         = mkLabel(scr, "ip ............ -",        kVal, kInfoX, row(10), kInfoW);
-  g_h.d_memory     = mkLabel(scr, "memory ........ -",        kVal, kInfoX, row(11), kInfoW);
-  g_h.d_brightness = mkLabel(scr, "brightness .... -",        kVal, kInfoX, row(12), kInfoW);
-  g_h.d_battery    = mkLabel(scr, "battery ....... -",        kVal, kInfoX, row(13), kInfoW);
+  g_h.d_uptime     = mkLabel(scr, "uptime ........ -",        kVal, kInfoX, row(4),  kInfoW);
+  g_h.d_resolution = mkLabel(scr, "resolution .... 1280x720", kVal, kInfoX, row(5),  kInfoW);
+  g_h.d_layout     = mkLabel(scr, "layout ........ terminal", kVal, kInfoX, row(6),  kInfoW);
+  g_h.d_shell      = mkLabel(scr, "shell ......... -",        kVal, kInfoX, row(7),  kInfoW);
+  g_h.d_wifi       = mkLabel(scr, "wifi .......... -",        kVal, kInfoX, row(8),  kInfoW);
+  g_h.d_ip         = mkLabel(scr, "ip ............ -",        kVal, kInfoX, row(9),  kInfoW);
+  g_h.d_memory     = mkLabel(scr, "memory ........ -",        kVal, kInfoX, row(10), kInfoW);
+  g_h.d_brightness = mkLabel(scr, "brightness .... -",        kVal, kInfoX, row(11), kInfoW);
+  g_h.d_battery    = mkLabel(scr, "battery ....... -",        kVal, kInfoX, row(12), kInfoW);
 
-  // shell line is static-ish; fill once with config server URL.
   writeKv(buf, sizeof(buf), "shell", cfg::SERVER_URL);
   setText(g_h.d_shell, buf, kVal);
 }
 
 void buildWeather(lv_obj_t* scr) {
-  buildPrompt(scr, 15, "weather --now");
-  g_h.w_summary  = mkLabel(scr,
+  mkPrompt(scr, 14, "weather --now");
+
+  g_h.w_summary = mkLabel(scr,
       "city ......... waiting...\n"
       "temp ......... -\n"
       "range ........ -\n"
       "humidity ..... -\n"
       "wind ......... -",
-      kVal, kPadL + 4, row(17), 60 * kCharW, 5);
-  g_h.w_aqi      = mkLabel(scr, "aqi .......... -", kMuted,
-                           kPadL + 4, row(22), 60 * kCharW);
+      kVal, col(0), row(15), 60 * kCharW, 5);
+
+  g_h.w_aqi = mkLabel(scr, "aqi .......... -",
+                      kMuted, col(0), row(20), 60 * kCharW);
 
   g_h.w_forecast = mkLabel(scr,
       "forecast --5d\n"
       "  -\n  -\n  -\n  -\n  -",
-      kAccent, kPadL + 70 * kCharW, row(17), 80 * kCharW, 6);
+      kAccent, col(60), row(15), 50 * kCharW, 6);
 }
 
-void buildUsageLine(lv_obj_t* scr, int r, lv_obj_t** id_out, lv_obj_t** session_out,
-                    lv_obj_t** weekly_out, const char* placeholder_id) {
-  *id_out = mkLabel(scr, placeholder_id, kAccent, kPadL + 4, row(r),
-                    60 * kCharW);
+void buildUsageBlock(lv_obj_t* scr, int r,
+                     lv_obj_t** id_out, lv_obj_t** session_out, lv_obj_t** weekly_out,
+                     const char* placeholder_id) {
+  *id_out      = mkLabel(scr, placeholder_id, kAccent,
+                         col(0), row(r), 110 * kCharW);
   *session_out = mkLabel(scr,
-      "  session  ░░░░░░░░░░░░░░░░░░░░    -    reset      -",
-      kVal, kPadL + 4, row(r + 1), 110 * kCharW);
+      "  session  [....................]    -    reset      -",
+      kVal, col(0), row(r + 1), 110 * kCharW);
   *weekly_out  = mkLabel(scr,
-      "  weekly   ░░░░░░░░░░░░░░░░░░░░    -    reset      -",
-      kVal, kPadL + 4, row(r + 2), 110 * kCharW);
+      "  weekly   [....................]    -    reset      -",
+      kVal, col(0), row(r + 2), 110 * kCharW);
 }
 
 void buildUsage(lv_obj_t* scr) {
-  buildPrompt(scr, 25, "usage --watch");
-  buildUsageLine(scr, 27, &g_h.u_claude_id, &g_h.u_claude_session, &g_h.u_claude_weekly,
-                 "claude   waiting for /api/claude...");
-  buildUsageLine(scr, 30, &g_h.u_codex_id,  &g_h.u_codex_session,  &g_h.u_codex_weekly,
-                 "codex    waiting for /api/codex...");
+  mkPrompt(scr, 22, "usage --watch");
+  buildUsageBlock(scr, 23, &g_h.u_claude_id, &g_h.u_claude_session, &g_h.u_claude_weekly,
+                  "claude  waiting for /api/claude...");
+  buildUsageBlock(scr, 26, &g_h.u_codex_id,  &g_h.u_codex_session,  &g_h.u_codex_weekly,
+                  "codex   waiting for /api/codex...");
 }
 
 void buildTail(lv_obj_t* scr) {
-  // separator
-  static char rule[600];
-  int off = 0;
-  for (int i = 0; i < 154 && off + 3 < (int)sizeof(rule) - 1; ++i) {
-    rule[off++] = 0xE2; rule[off++] = 0x94; rule[off++] = 0x80;
-  }
-  rule[off] = '\0';
-  mkLabel(scr, rule, kRule, kPadL, row(34), 1240);
-
-  mkLabel(scr, "$ tail -f /var/log/poller", kPrompt, kPadL, row(35), 60 * kCharW);
-
+  mkPrompt(scr, 30, "tail -f /var/log/poller");
   for (int i = 0; i < kTailRows; ++i) {
     g_h.t_lines[i] = mkLabel(scr, "  (waiting for events)",
                              i == 0 ? kVal : kMuted,
-                             kPadL + 2 * kCharW, row(36 + i), 150 * kCharW);
+                             col(2), row(31 + i), 122 * kCharW);
   }
 }
 
 // ─── build / callbacks ───────────────────────────────────────────────────
 void buildScreen() {
-  g_font_body = lv_font_tamzen_16;
-  g_font_body.fallback = &lv_font_unscii_16;
+  g_font_body = lv_font_tamzen_20;
 
   lv_obj_t* scr = lv_screen_active();
   lv_obj_clean(scr);
@@ -447,7 +414,7 @@ void onWeather(const data::WeatherData& d) {
 
 void renderUsageLine(lv_obj_t* lbl, const char* label, int pct, const char* reset) {
   if (!lbl) return;
-  char bar[80];
+  char bar[32];
   renderBar(bar, sizeof(bar), pct, 20);
   char line[160];
   snprintf(line, sizeof(line), "  %-7s  %s  %3d %%  reset %s",
@@ -507,9 +474,9 @@ const Layout kTerminalLayout = {
   onWeather,
   onClaude,
   onCodex,
-  nullptr,         // no news in terminal
-  nullptr,         // no weather PNG icon
-  nullptr,         // no brand icons
+  nullptr,
+  nullptr,
+  nullptr,
   nullptr,
   { 0, 0 },
 };
