@@ -75,15 +75,18 @@ bool parseCodex (const char* json, CodexData*  out);
 
 // --- AI news (Hacker News via the server) ----------------------------------
 
+constexpr int kMaxNewsItems  = 12;
+constexpr int kMaxNewsTitle  = 160;   // long enough for 2-line wrap
+
 struct NewsItem {
-  char title[96];   // truncated to fit one line on the inbox card
+  char title[kMaxNewsTitle];
   int  score;
 };
 
 struct NewsData {
   bool      valid;
-  uint8_t   count;       // number of populated items in `items` (0..5)
-  NewsItem  items[5];    // compact news layouts can show up to 5 rows
+  uint8_t   count;
+  NewsItem  items[kMaxNewsItems];
 };
 
 bool parseNews(const char* json, NewsData* out);

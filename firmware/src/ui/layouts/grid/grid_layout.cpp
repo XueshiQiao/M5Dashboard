@@ -48,17 +48,29 @@ struct UsageHandles {
   lv_obj_t* extra;
 };
 
-struct NewsHandles {
-  lv_obj_t* count;
-  lv_obj_t* items[5];
-};
-
 StatusHandles  g_status = {};
 WeatherHandles g_wx = {};
 UsageHandles   g_claude = {};
 UsageHandles   g_codex = {};
-NewsHandles    g_news = {};
-constexpr int kNewsRows = 5;
+
+// Header has to fit the 4× Tamzen "DASHBOARD" hero (80 px tall).
+constexpr int kHeaderX = 14;
+constexpr int kHeaderY = 12;
+constexpr int kHeaderW = 1252;
+constexpr int kHeaderH = 130;
+
+// Two-column grid: weather on the left, claude/codex stacked on the right.
+// Adjust kLeftColPct to shift the split (50 = even, 67 = weather-favoured).
+constexpr int kLeftColPct  = 67;
+constexpr int kCardsX      = 14;
+constexpr int kCardsY      = kHeaderY + kHeaderH + 12;
+constexpr int kCardsW      = 1252;
+constexpr int kCardsH      = 720 - kCardsY - 12;
+constexpr int kColGap      = 12;
+constexpr int kLeftColW    = (kCardsW - kColGap) * kLeftColPct / 100;
+constexpr int kRightColW   = kCardsW - kColGap - kLeftColW;
+constexpr int kRightColX   = kCardsX + kLeftColW + kColGap;
+constexpr int kRightCardH  = (kCardsH - kColGap) / 2;
 
 constexpr uint32_t kBg        = 0x020404;
 constexpr uint32_t kPanel     = 0x050807;
@@ -75,8 +87,6 @@ constexpr uint32_t kPink      = 0xFF1C7D;
 constexpr uint32_t kPurple    = 0xD63BFF;
 constexpr uint32_t kBlue      = 0x36A3FF;
 constexpr uint32_t kRed       = 0xFF5B3E;
-
-const lv_font_t* kTitleFont = &lv_font_montserrat_40;
 
 constexpr size_t kIconBufBytes = 14 * 1024;
 uint8_t* g_weather_icon_buf = nullptr;
@@ -252,25 +262,27 @@ void statusTimerCb(lv_timer_t*) {
 }
 
 void buildHeader(lv_obj_t* scr) {
-  lv_obj_t* header = makePanel(scr, 14, 12, 1252, 94, "", kDim);
+  lv_obj_t* header = makePanel(scr, kHeaderX, kHeaderY, kHeaderW, kHeaderH, "", kDim);
   lv_obj_set_style_border_color(header, lv_color_hex(0x3B4544), 0);
 
   lv_obj_t* prompt = makeLabel(header, "user@m5stack-tab5:~$ vibehub",
                                &lv_font_montserrat_20, kText);
   lv_obj_set_size(prompt, 430, 28);
-  lv_obj_align(prompt, LV_ALIGN_TOP_LEFT, 22, 16);
+  lv_obj_align(prompt, LV_ALIGN_TOP_LEFT, 22, 12);
 
+  // Hero "DASHBOARD" — 4× Tamzen Bold (40 px advance, ~72 px tall).
   const char* logo_text = "DASHBOARD";
   const uint32_t colors[] = {
       kYellow, kOrange, kGreen, kCyan, kBlue, kPurple, kPink, kOrange, kGreen,
   };
+  constexpr int kLetterW = 40;     // Tamzen 80b advance width
   int logo_x = 24;
   for (int i = 0; i < 9; ++i) {
     char ch[2] = { logo_text[i], '\0' };
-    lv_obj_t* letter = makeLabel(header, ch, kTitleFont, colors[i]);
-    lv_obj_set_size(letter, i == 5 ? 44 : 38, 48);
-    lv_obj_set_pos(letter, logo_x, 42);
-    logo_x += i == 5 ? 44 : 38;
+    lv_obj_t* letter = makeLabel(header, ch, &lv_font_tamzen_80b, colors[i]);
+    lv_obj_set_size(letter, kLetterW, 80);
+    lv_obj_set_pos(letter, logo_x, 44);
+    logo_x += kLetterW;
   }
 
   g_status.wifi = makeLabel(header, "", &lv_font_montserrat_24, kGreen,
@@ -285,7 +297,7 @@ void buildHeader(lv_obj_t* scr) {
 }
 
 void buildWeather(lv_obj_t* scr) {
-  lv_obj_t* panel = makePanel(scr, 14, 120, 458, 246, "", kCyan);
+  lv_obj_t* panel = makePanel(scr, kCardsX, kCardsY, kLeftColW, kCardsH, "", kCyan);
 
   if (!g_weather_icon_buf) {
     g_weather_icon_buf = static_cast<uint8_t*>(
@@ -298,38 +310,42 @@ void buildWeather(lv_obj_t* scr) {
     g_weather_icon_dsc.data_size = 0;
   }
 
-  g_wx.city = makeLabel(panel, "-", &lv_font_montserrat_22, kText);
-  lv_obj_set_size(g_wx.city, 220, 30);
-  lv_obj_set_pos(g_wx.city, 22, 18);
+  // City — title-sized, top-left.
+  g_wx.city = makeLabel(panel, "-", &lv_font_montserrat_36, kText);
+  lv_obj_set_size(g_wx.city, kLeftColW - 40, 44);
+  lv_obj_set_pos(g_wx.city, 24, 18);
 
+  // Icon left of the temp number.
   g_wx.icon = lv_image_create(panel);
-  lv_obj_set_pos(g_wx.icon, 24, 78);
+  lv_obj_set_pos(g_wx.icon, 32, 80);
   lv_obj_set_size(g_wx.icon, kWeatherIconPx, kWeatherIconPx);
 
-  // 4× Tamzen Bold (40×80 per glyph, ~72 px line height) — the hero number.
-  g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_tamzen_80b, kCyan);
-  lv_obj_set_size(g_wx.temp, 240, 80);
-  lv_obj_set_pos(g_wx.temp, 154, 50);
+  g_wx.temp = makeLabel(panel, "--" "\xC2\xB0" "C", &lv_font_montserrat_48, kCyan);
+  lv_obj_set_size(g_wx.temp, 280, 60);
+  lv_obj_set_pos(g_wx.temp, 180, 110);
 
-  g_wx.condition = makeLabel(panel, "waiting", &lv_font_montserrat_18, kText);
-  lv_obj_set_size(g_wx.condition, 200, 26);
-  lv_obj_set_pos(g_wx.condition, 158, 138);
+  // Condition + details below the hero row.
+  g_wx.condition = makeLabel(panel, "waiting", &lv_font_montserrat_24, kText);
+  lv_obj_set_size(g_wx.condition, kLeftColW - 60, 30);
+  lv_obj_set_pos(g_wx.condition, 24, 218);
 
-  g_wx.details = makeLabel(panel, "feels: -\nhumidity: -\nwind: -",
-                           &lv_font_montserrat_16, kMuted);
-  lv_obj_set_size(g_wx.details, 150, 86);
-  lv_obj_set_pos(g_wx.details, 300, 68);
+  g_wx.details = makeLabel(panel, "range: -    humidity: -    wind: -",
+                           &lv_font_montserrat_20, kMuted);
+  lv_obj_set_size(g_wx.details, kLeftColW - 60, 30);
+  lv_obj_set_pos(g_wx.details, 24, 254);
 
-  g_wx.aqi = makeLabel(panel, "AQI -", &lv_font_montserrat_16, kYellow);
-  lv_obj_set_size(g_wx.aqi, 150, 24);
-  lv_obj_set_pos(g_wx.aqi, 300, 158);
+  g_wx.aqi = makeLabel(panel, "AQI -", &lv_font_montserrat_22, kYellow);
+  lv_obj_set_size(g_wx.aqi, kLeftColW - 60, 30);
+  lv_obj_set_pos(g_wx.aqi, 24, 296);
 
-  int col_w = 86;
+  // 5-day forecast strip across the bottom of the panel.
+  const int kForecastY    = kCardsH - 90;
+  const int kForecastColW = (kLeftColW - 40) / 5;
   for (int i = 0; i < 5; ++i) {
-    g_wx.forecast[i] = makeLabel(panel, "--  -/-", &lv_font_montserrat_14, kText,
+    g_wx.forecast[i] = makeLabel(panel, "--  -/-", &lv_font_montserrat_18, kText,
                                  LV_TEXT_ALIGN_CENTER);
-    lv_obj_set_size(g_wx.forecast[i], 78, 38);
-    lv_obj_set_pos(g_wx.forecast[i], 18 + i * col_w, 200);
+    lv_obj_set_size(g_wx.forecast[i], kForecastColW - 8, 60);
+    lv_obj_set_pos(g_wx.forecast[i], 20 + i * kForecastColW, kForecastY);
   }
 }
 
@@ -381,79 +397,6 @@ void buildUsage(lv_obj_t* scr, int x, int y, int w, int h, const char* title,
   lv_obj_align(handles->extra, LV_ALIGN_BOTTOM_LEFT, 16, -2);
 }
 
-void buildNews(lv_obj_t* scr) {
-  lv_obj_t* panel = makePanel(scr, 14, 378, 760, 260, "[ VIBECODING NEWS ]", kGreen);
-
-  g_news.count = makeLabel(panel, "0 items", &lv_font_montserrat_16, kMuted);
-  lv_obj_set_size(g_news.count, 120, 22);
-  lv_obj_align(g_news.count, LV_ALIGN_TOP_RIGHT, -16, 15);
-
-  for (int i = 0; i < kNewsRows; ++i) {
-    char timebox[16];
-    snprintf(timebox, sizeof(timebox), "%dh ago", 2 + i * 3);
-    lv_obj_t* badge = makeLabel(panel, timebox, &lv_font_montserrat_14,
-                                i == 0 ? kGreen : (i == 1 ? kBlue : (i == 2 ? kPurple : kOrange)),
-                                LV_TEXT_ALIGN_CENTER);
-    lv_obj_set_size(badge, 72, 22);
-    lv_obj_set_pos(badge, 18, 58 + i * 34);
-
-    g_news.items[i] = makeLabel(panel, "> waiting for server",
-                                &lv_font_montserrat_16, kText);
-    lv_obj_set_size(g_news.items[i], 620, 28);
-    lv_obj_set_pos(g_news.items[i], 104, 55 + i * 34);
-  }
-
-  static const char* art =
-      "  [bot]\n"
-      " <o  o>\n"
-      " /|__|\\";
-  lv_obj_t* bot = makeLabel(panel, art, &lv_font_montserrat_14, kCyan,
-                            LV_TEXT_ALIGN_CENTER);
-  lv_obj_set_size(bot, 92, 76);
-  lv_obj_align(bot, LV_ALIGN_BOTTOM_RIGHT, -28, -12);
-}
-
-void buildTodos(lv_obj_t* scr) {
-  lv_obj_t* panel = makePanel(scr, 786, 378, 480, 260, "[ TODOS ]", kPink);
-
-  static const char* todos =
-      "[x] Setup Claude Code CLI\n"
-      "[x] Wire weather endpoint\n"
-      "[x] Add Codex usage polling\n"
-      "[ ] Add Redis cache for usage data\n"
-      "[ ] Integrate Notion API for tasks";
-  lv_obj_t* body = makeLabel(panel, todos, &lv_font_montserrat_18, kText);
-  lv_obj_set_size(body, 430, 142);
-  lv_obj_set_pos(body, 24, 62);
-
-  lv_obj_t* progress = makeBar(panel, 300, 18, kPink);
-  lv_obj_set_pos(progress, 24, 216);
-  lv_bar_set_value(progress, 60, LV_ANIM_OFF);
-
-  lv_obj_t* label = makeLabel(panel, "3/5 tasks completed", &lv_font_montserrat_16, kPink);
-  lv_obj_set_size(label, 210, 22);
-  lv_obj_set_pos(label, 24, 194);
-
-  lv_obj_t* pct = makeLabel(panel, "60%", &lv_font_montserrat_18, kPink,
-                            LV_TEXT_ALIGN_RIGHT);
-  lv_obj_set_size(pct, 70, 24);
-  lv_obj_set_pos(pct, 340, 213);
-}
-
-void buildFooter(lv_obj_t* scr) {
-  lv_obj_t* footer = makePanel(scr, 14, 652, 1252, 54, "", kDim);
-  lv_obj_set_style_border_color(footer, lv_color_hex(0x3B4544), 0);
-  lv_obj_t* tip = makeLabel(footer, "* Tips: Connect. Create. Automate. Vibe. Repeat.",
-                            &lv_font_montserrat_18, kText);
-  lv_obj_set_size(tip, 700, 26);
-  lv_obj_align(tip, LV_ALIGN_LEFT_MID, 22, 0);
-
-  lv_obj_t* version = makeLabel(footer, "v1.0.0", &lv_font_montserrat_18, kMuted,
-                                LV_TEXT_ALIGN_RIGHT);
-  lv_obj_set_size(version, 100, 26);
-  lv_obj_align(version, LV_ALIGN_RIGHT_MID, -22, 0);
-}
-
 void applyUsage(const UsageHandles& h, const data::ClaudeData& d) {
   if (!d.valid || !h.user) return;
   updateStatus();
@@ -502,14 +445,10 @@ void destroyGridScreen() {
     lv_timer_del(g_status_timer);
     g_status_timer = nullptr;
   }
-  // Widgets themselves are deleted by the registry's lv_obj_clean.
-  // Zero our handle structs so any straggler delivery hits the
-  // null-checks instead of dereferencing freed pointers.
   g_status = {};
   g_wx = {};
   g_claude = {};
   g_codex = {};
-  g_news = {};
 }
 
 void buildGridScreen() {
@@ -521,11 +460,10 @@ void buildGridScreen() {
 
   buildHeader(scr);
   buildWeather(scr);
-  buildUsage(scr, 484, 120, 384, 246, "", kOrange, &g_claude);
-  buildUsage(scr, 880, 120, 386, 246, "", kPurple, &g_codex);
-  buildNews(scr);
-  buildTodos(scr);
-  buildFooter(scr);
+  buildUsage(scr, kRightColX, kCardsY,
+             kRightColW, kRightCardH, "", kOrange, &g_claude);
+  buildUsage(scr, kRightColX, kCardsY + kRightCardH + kColGap,
+             kRightColW, kRightCardH, "", kPurple, &g_codex);
 
   initBrandIcon(g_brand_claude);
   initBrandIcon(g_brand_codex);
@@ -581,25 +519,6 @@ void updateWeatherCard(const data::WeatherData& d) {
 void updateClaudeCard(const data::ClaudeData& d) { applyUsage(g_claude, d); }
 void updateCodexCard(const data::CodexData& d) { applyUsage(g_codex, d); }
 
-void updateInboxCard(const data::NewsData& d) {
-  if (!d.valid || !g_news.count) return;
-  updateStatus();
-
-  char count[24];
-  snprintf(count, sizeof(count), "%u items", (unsigned)d.count);
-  lv_label_set_text(g_news.count, count);
-
-  for (int i = 0; i < kNewsRows; ++i) {
-    if (i < d.count) {
-      char line[120];
-      snprintf(line, sizeof(line), "> %s", d.items[i].title);
-      lv_label_set_text(g_news.items[i], line);
-    } else {
-      lv_label_set_text(g_news.items[i], "> -");
-    }
-  }
-}
-
 void setWeatherIconPng(const uint8_t* png, size_t len) {
   if (!g_wx.icon || !g_weather_icon_buf) return;
   if (len > kIconBufBytes) return;
@@ -634,7 +553,7 @@ const Layout kGridLayout = {
   updateWeatherCard,
   updateClaudeCard,
   updateCodexCard,
-  updateInboxCard,
+  nullptr,                  // grid no longer renders news
   setWeatherIconPng,
   setClaudeIconPng,
   setCodexIconPng,

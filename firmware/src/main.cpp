@@ -14,7 +14,9 @@
 #include "m5_io.h"
 #include "ui/registry.h"
 #include "ui/layouts/grid/grid_layout.h"
+#include "ui/layouts/news/news_layout.h"
 #include "ui/layouts/terminal/terminal_layout.h"
+#include "ui/layouts/todos/todos_layout.h"
 #include "ui/layouts/vibehub/vibehub_layout.h"
 
 namespace {
@@ -56,6 +58,8 @@ void setup() {
   lvgl_bridge_init();
 
   ui::registerLayout(&ui::kGridLayout);
+  ui::registerLayout(&ui::kNewsLayout);
+  ui::registerLayout(&ui::kTodosLayout);
   ui::registerLayout(&ui::kTerminalLayout);
   ui::registerLayout(&ui::kVibehubLayout);
 
