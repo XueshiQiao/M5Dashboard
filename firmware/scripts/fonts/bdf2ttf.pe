@@ -1,3 +1,0 @@
-Open($1)
-SelectAll()
-Generate($2, "ttf", 0x80)
