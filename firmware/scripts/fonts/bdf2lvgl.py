@@ -67,9 +67,12 @@ def parse_bdf(path):
                             # Each hex row encodes one row of the BBX, MSB-aligned
                             # to the byte width. BBX width may not align to byte.
                             byte_count = (gbbw + 7) // 8
+                            # BDF stores each row's bits MSB-first within
+                            # byte_count bytes; the leftmost pixel is bit
+                            # (byte_count*8 - 1), trailing bits are zero
+                            # padding. Do NOT shift further — the bits are
+                            # already in the right positions.
                             value = int(hex_row, 16) if hex_row else 0
-                            # Left-justify the bits within (byte_count * 8) cells.
-                            value <<= (byte_count * 8 - gbbw)
                             rows.append((value, byte_count))
                         break
                 if code >= 0:
